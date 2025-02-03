@@ -1,49 +1,64 @@
+/* eslint-disable global-require */
 import { Module } from '@nestjs/common';
 import {
+  ChangeRepository,
+  ControlValuesRepository,
   DalService,
-  UserRepository,
-  OrganizationRepository,
   EnvironmentRepository,
   ExecutionDetailsRepository,
-  NotificationTemplateRepository,
-  SubscriberRepository,
-  NotificationRepository,
-  MessageRepository,
-  NotificationGroupRepository,
-  MessageTemplateRepository,
-  MemberRepository,
-  LayoutRepository,
-  LogRepository,
-  IntegrationRepository,
-  ChangeRepository,
-  JobRepository,
   FeedRepository,
-  SubscriberPreferenceRepository,
+  IntegrationRepository,
+  JobRepository,
+  LayoutRepository,
+  MemberRepository,
+  MessageRepository,
+  MessageTemplateRepository,
+  NotificationGroupRepository,
+  NotificationRepository,
+  NotificationTemplateRepository,
+  OrganizationRepository,
+  PreferencesRepository,
+  SubscriberRepository,
+  TenantRepository,
   TopicRepository,
   TopicSubscribersRepository,
-  TenantRepository,
+  UserRepository,
+  WorkflowOverrideRepository,
 } from '@novu/dal';
 import {
-  InMemoryProviderService,
-  AnalyticsService,
+  analyticsService,
+  cacheService,
+  CacheServiceHealthIndicator,
+  ComputeJobWaitDurationService,
+  CreateExecutionDetails,
   createNestLoggingModuleOptions,
-  LoggerModule,
-  CacheService,
+  DalServiceHealthIndicator,
+  distributedLockService,
+  ExecuteBridgeRequest,
+  ExecutionLogRoute,
+  featureFlagsService,
+  GetDecryptedSecretKey,
+  getFeatureFlag,
+  injectCommunityAuthProviders,
   InvalidateCacheService,
-  AzureBlobStorageService,
-  GCSStorageService,
-  S3StorageService,
-  StorageService,
-  WsQueueService,
-  DistributedLockService,
-  PerformanceService,
-  TriggerQueueService,
-  GetFeatureFlag,
-  LaunchDarklyService,
-  FeatureFlagsService,
+  LoggerModule,
+  QueuesModule,
+  storageService,
 } from '@novu/application-generic';
 
-import * as packageJson from '../../../package.json';
+import { isClerkEnabled, JobTopicNameEnum } from '@novu/shared';
+import { JwtModule } from '@nestjs/jwt';
+import packageJson from '../../../package.json';
+
+function getDynamicAuthProviders() {
+  if (isClerkEnabled()) {
+    const eeAuthPackage = require('@novu/ee-auth');
+
+    return eeAuthPackage.injectEEAuthProviders();
+  } else {
+    return injectCommunityAuthProviders();
+  }
+}
 
 const DAL_MODELS = [
   UserRepository,
@@ -58,145 +73,80 @@ const DAL_MODELS = [
   NotificationGroupRepository,
   MemberRepository,
   LayoutRepository,
-  LogRepository,
   IntegrationRepository,
   ChangeRepository,
   JobRepository,
   FeedRepository,
-  SubscriberPreferenceRepository,
   TopicRepository,
   TopicSubscribersRepository,
   TenantRepository,
+  WorkflowOverrideRepository,
+  ControlValuesRepository,
+  PreferencesRepository,
 ];
 
-function getStorageServiceClass() {
-  switch (process.env.STORAGE_SERVICE) {
-    case 'GCS':
-      return GCSStorageService;
-    case 'AZURE':
-      return AzureBlobStorageService;
-    default:
-      return S3StorageService;
-  }
-}
-
-const dalService = new DalService();
-
-const launchDarklyService = {
-  provide: LaunchDarklyService,
-  useFactory: (): LaunchDarklyService => {
-    const service = new LaunchDarklyService();
+const dalService = {
+  provide: DalService,
+  useFactory: async () => {
+    const service = new DalService();
+    await service.connect(process.env.MONGO_URL || '.');
 
     return service;
   },
 };
 
-const featureFlagsService = {
-  provide: FeatureFlagsService,
-  useFactory: async (): Promise<FeatureFlagsService> => {
-    const instance = new FeatureFlagsService();
-
-    await instance.service.initialize();
-
-    return instance;
-  },
-};
-
-const getFeatureFlagUseCase = {
-  provide: GetFeatureFlag,
-  useFactory: async (): Promise<GetFeatureFlag> => {
-    const featureFlagsServiceFactory = await featureFlagsService.useFactory();
-    const getFeatureFlag = new GetFeatureFlag(featureFlagsServiceFactory);
-
-    return getFeatureFlag;
-  },
-};
-
-const inMemoryProviderService = {
-  provide: InMemoryProviderService,
-  useFactory: (enableAutoPipelining?: boolean): InMemoryProviderService => {
-    const inMemoryProvider = new InMemoryProviderService(enableAutoPipelining);
-    inMemoryProvider.initialize();
-
-    return inMemoryProvider;
-  },
-};
-
-const cacheService = {
-  provide: CacheService,
-  useFactory: () => {
-    // TODO: Temporary to test in Dev. Should be removed.
-    const enableAutoPipelining = process.env.REDIS_CACHE_ENABLE_AUTOPIPELINING === 'true';
-    const factoryInMemoryProviderService = inMemoryProviderService.useFactory(enableAutoPipelining);
-
-    return new CacheService(factoryInMemoryProviderService);
-  },
-};
-
-const distributedLockService = {
-  provide: DistributedLockService,
-  useFactory: () => {
-    const factoryInMemoryProviderService = inMemoryProviderService.useFactory();
-
-    return new DistributedLockService(factoryInMemoryProviderService);
-  },
-};
-
 const PROVIDERS = [
-  launchDarklyService,
-  featureFlagsService,
-  getFeatureFlagUseCase,
-  inMemoryProviderService,
+  analyticsService,
   cacheService,
+  CacheServiceHealthIndicator,
+  ComputeJobWaitDurationService,
+  dalService,
+  DalServiceHealthIndicator,
   distributedLockService,
-  {
-    provide: WsQueueService,
-    useClass: WsQueueService,
-  },
-  {
-    provide: DalService,
-    useFactory: async () => {
-      await dalService.connect(process.env.MONGO_URL);
-
-      return dalService;
-    },
-  },
-  {
-    provide: PerformanceService,
-    useFactory: () => {
-      return new PerformanceService();
-    },
-  },
+  featureFlagsService,
   InvalidateCacheService,
+  storageService,
   ...DAL_MODELS,
-  {
-    provide: StorageService,
-    useClass: getStorageServiceClass(),
-  },
-  {
-    provide: AnalyticsService,
-    useFactory: async () => {
-      const analyticsService = new AnalyticsService(process.env.SEGMENT_TOKEN);
-
-      await analyticsService.initialize();
-
-      return analyticsService;
-    },
-  },
-  TriggerQueueService,
-  ...DAL_MODELS,
+  ExecutionLogRoute,
+  CreateExecutionDetails,
+  ExecuteBridgeRequest,
+  getFeatureFlag,
+  GetDecryptedSecretKey,
 ];
 
+const IMPORTS = [
+  QueuesModule.forRoot([JobTopicNameEnum.WEB_SOCKETS, JobTopicNameEnum.WORKFLOW, JobTopicNameEnum.INBOUND_PARSE_MAIL]),
+  LoggerModule.forRoot(
+    createNestLoggingModuleOptions({
+      serviceName: packageJson.name,
+      version: packageJson.version,
+    })
+  ),
+];
+
+if (process.env.NODE_ENV === 'test') {
+  /**
+   * This is here only because of the tests. These providers are available at AppModule level,
+   * but since in tests we are often importing just the SharedModule and not the entire AppModule
+   * we need to make sure these providers are available.
+   *
+   * TODO: modify tests to either import all services they need explicitly, or remove repositories from SharedModule,
+   * and then import SharedModule + repositories explicitly.
+   */
+  PROVIDERS.push(...getDynamicAuthProviders());
+  IMPORTS.push(
+    JwtModule.register({
+      secret: `${process.env.JWT_SECRET}`,
+      signOptions: {
+        expiresIn: 360000,
+      },
+    })
+  );
+}
+
 @Module({
-  imports: [
-    LoggerModule.forRoot(
-      createNestLoggingModuleOptions({
-        serviceName: packageJson.name,
-        version: packageJson.version,
-      })
-    ),
-  ],
+  imports: [...IMPORTS],
   providers: [...PROVIDERS],
-  exports: [...PROVIDERS, LoggerModule],
+  exports: [...PROVIDERS, LoggerModule, QueuesModule],
 })
 export class SharedModule {}

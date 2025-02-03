@@ -1,20 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { MessageEntity, DalException, MessageRepository, SubscriberRepository, SubscriberEntity } from '@novu/dal';
 import {
-  MessageEntity,
-  DalException,
-  MessageRepository,
-  SubscriberRepository,
-  SubscriberEntity,
-  MemberRepository,
-} from '@novu/dal';
-import { ChannelTypeEnum } from '@novu/shared';
-import {
-  WsQueueService,
+  WebSocketsQueueService,
   AnalyticsService,
   InvalidateCacheService,
   buildFeedKey,
   buildMessageCountKey,
 } from '@novu/application-generic';
+import { WebSocketEventEnum } from '@novu/shared';
 
 import { RemoveMessageCommand } from './remove-message.command';
 import { ApiException } from '../../../shared/exceptions/api.exception';
@@ -25,10 +18,9 @@ export class RemoveMessage {
   constructor(
     private invalidateCache: InvalidateCacheService,
     private messageRepository: MessageRepository,
-    private wsQueueService: WsQueueService,
+    private webSocketsQueueService: WebSocketsQueueService,
     private analyticsService: AnalyticsService,
-    private subscriberRepository: SubscriberRepository,
-    private memberRepository: MemberRepository
+    private subscriberRepository: SubscriberRepository
   ) {}
 
   async execute(command: RemoveMessageCommand): Promise<MessageEntity> {
@@ -63,6 +55,7 @@ export class RemoveMessage {
         _id: command.messageId,
       });
 
+      // eslint-disable-next-line prefer-destructuring
       deletedMessage = item[0];
 
       if (!deletedMessage.read) {
@@ -81,44 +74,27 @@ export class RemoveMessage {
     return deletedMessage;
   }
 
-  private async updateServices(command: RemoveMessageCommand, subscriber, message, marked: string) {
-    const admin = await this.memberRepository.getOrganizationAdminAccount(command.organizationId);
-    const count = await this.messageRepository.getCount(
-      command.environmentId,
-      subscriber._id,
-      ChannelTypeEnum.IN_APP,
-      {
-        [marked]: false,
-      },
-      { limit: 1000 }
-    );
+  private async updateServices(command: RemoveMessageCommand, subscriber, message, marked: MarkEnum) {
+    this.updateSocketCount(subscriber, marked);
 
-    this.updateSocketCount(subscriber, count, marked);
-
-    if (admin) {
-      this.analyticsService.track(`Removed Message - [Notification Center]`, admin._userId, {
-        _subscriber: message._subscriberId,
-        _organization: command.organizationId,
-        _template: message._templateId,
-      });
-    }
+    this.analyticsService.track(`Removed Message - [Notification Center]`, command.organizationId, {
+      _subscriber: message._subscriberId,
+      _organization: command.organizationId,
+      _template: message._templateId,
+    });
   }
 
-  private updateSocketCount(subscriber: SubscriberEntity, count: number, mark: string) {
-    const eventMessage = `un${mark}_count_changed`;
-    const countKey = `un${mark}Count`;
+  private updateSocketCount(subscriber: SubscriberEntity, mark: MarkEnum) {
+    const eventMessage = mark === MarkEnum.READ ? WebSocketEventEnum.UNREAD : WebSocketEventEnum.UNSEEN;
 
-    this.wsQueueService.bullMqService.add(
-      'sendMessage',
-      {
+    this.webSocketsQueueService.add({
+      name: 'sendMessage',
+      data: {
         event: eventMessage,
         userId: subscriber._id,
-        payload: {
-          [countKey]: count,
-        },
+        _environmentId: subscriber._environmentId,
       },
-      {},
-      subscriber._organizationId
-    );
+      groupId: subscriber._organizationId,
+    });
   }
 }

@@ -4,12 +4,11 @@ import { useMemo } from 'react';
 import { Row } from 'react-table';
 import { ChannelTypeEnum } from '@novu/shared';
 
+import { Table, Text, withCellLoading, IExtendedColumn } from '@novu/design-system';
 import PageContainer from '../../components/layout/components/PageContainer';
 import PageHeader from '../../components/layout/components/PageHeader';
-import { Table, Text, withCellLoading, IExtendedColumn } from '../../design-system';
-import { useIntegrations } from '../../hooks';
+import { useEnvironment, useIntegrations } from '../../hooks';
 import { IntegrationsListToolbar } from './components/IntegrationsListToolbar';
-import { useFetchEnvironments } from '../../hooks/useFetchEnvironments';
 import { IntegrationNameCell } from './components/IntegrationNameCell';
 import type { ITableIntegration } from './types';
 import { IntegrationChannelCell } from './components/IntegrationChannelCell';
@@ -18,6 +17,7 @@ import { IntegrationStatusCell } from './components/IntegrationStatusCell';
 import { When } from '../../components/utils/When';
 import { IntegrationsListNoData } from './components/IntegrationsListNoData';
 import { mapToTableIntegration } from './utils';
+import { ConditionCell } from './components/ConditionCell';
 
 const columns: IExtendedColumn<ITableIntegration>[] = [
   {
@@ -50,6 +50,13 @@ const columns: IExtendedColumn<ITableIntegration>[] = [
     Cell: IntegrationEnvironmentCell,
   },
   {
+    accessor: 'conditions',
+    Header: 'Condition',
+    width: 100,
+    maxWidth: 100,
+    Cell: ConditionCell,
+  },
+  {
     accessor: 'active',
     Header: 'Status',
     width: 125,
@@ -69,9 +76,9 @@ export const IntegrationsList = ({
   onRowClickCallback: (row: Row<ITableIntegration>) => void;
   onChannelClick: (channel: ChannelTypeEnum) => void;
 }) => {
-  const { environments, isLoading: areEnvironmentsLoading } = useFetchEnvironments();
+  const { environments, isLoaded } = useEnvironment();
   const { integrations, loading: areIntegrationsLoading } = useIntegrations();
-  const isLoading = areEnvironmentsLoading || areIntegrationsLoading;
+  const isLoading = !isLoaded || areIntegrationsLoading;
   const hasIntegrations = integrations && integrations?.length > 0;
 
   const data = useMemo<ITableIntegration[] | undefined>(() => {
@@ -79,17 +86,13 @@ export const IntegrationsList = ({
   }, [integrations, environments]);
 
   return (
-    <PageContainer
-      style={{
-        position: 'relative',
-        overflow: 'hidden',
-      }}
-      title="Integrations"
-    >
-      <PageHeader title="Integrations Store" />
-      <Container fluid sx={{ padding: '0 30px 8px 30px' }}>
-        <IntegrationsListToolbar onAddProviderClick={onAddProviderClick} areIntegrationsLoading={isLoading} />
-      </Container>
+    <PageContainer title="Integrations">
+      <PageHeader title="Integration Store" />
+      <When truthy={hasIntegrations}>
+        <Container fluid sx={{ padding: '0 24px 8px 30px' }}>
+          <IntegrationsListToolbar onAddProviderClick={onAddProviderClick} areIntegrationsLoading={isLoading} />
+        </Container>
+      </When>
       <When truthy={hasIntegrations || isLoading}>
         <Table
           onRowClick={onRowClickCallback}
@@ -98,11 +101,11 @@ export const IntegrationsList = ({
           columns={columns}
           data={data}
         />
-        {withOutlet && <Outlet />}
       </When>
       <When truthy={!hasIntegrations && !isLoading}>
         <IntegrationsListNoData onChannelClick={onChannelClick} />
       </When>
+      {withOutlet && <Outlet />}
     </PageContainer>
   );
 };

@@ -1,5 +1,6 @@
-import { IsDefined, IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsDefined, IsEnum, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { ChannelTypeEnum, ICredentialsDto } from '@novu/shared';
+import { MessageFilter } from '@novu/application-generic';
 
 import { EnvironmentCommand } from '../../../shared/commands/project.command';
 
@@ -31,4 +32,9 @@ export class CreateIntegrationCommand extends EnvironmentCommand {
 
   @IsDefined()
   userId: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  conditions?: MessageFilter[];
 }

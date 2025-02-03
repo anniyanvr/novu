@@ -3,17 +3,17 @@ import { Grid, Timeline } from '@mantine/core';
 import styled from '@emotion/styled';
 import { useNavigate } from 'react-router-dom';
 
-import { colors } from '../../../../design-system';
+import { colors } from '@novu/design-system';
 import { getStartedSteps, OnBoardingAnalyticsEnum } from '../../consts';
 import { useSegment } from '../../../../components/providers/SegmentProvider';
-import { ROUTES } from '../../../../constants/routes.enum';
+import { ROUTES } from '../../../../constants/routes';
 
 const BULLET_TOP_MARGIN = 20;
 
 export function BodyLayout({ children }: { children: React.ReactNode }) {
   return (
     <StyledBody>
-      <Grid columns={24}>
+      <Grid columns={24} m={0}>
         <Grid.Col span={7}>
           <BodyNavigation />
         </Grid.Col>
@@ -24,15 +24,17 @@ export function BodyLayout({ children }: { children: React.ReactNode }) {
 }
 
 const StyledBody = styled.div`
-  display: block;
-  flex: auto;
+  height: calc(100vh - 180px);
+  padding-top: 25px;
+  padding-bottom: 25px;
+  overflow-y: auto;
 `;
 
 function BodyNavigation() {
   const navigate = useNavigate();
   const segment = useSegment();
 
-  const stepNum = location.pathname === ROUTES.GET_STARTED ? 1 : 2;
+  const stepNum = window.location.pathname === ROUTES.GET_STARTED ? 1 : 2;
 
   function handleClick(step: 'first' | 'second') {
     const eventAction =
@@ -52,7 +54,7 @@ function BodyNavigation() {
         styles={{
           itemBullet: {
             marginTop: `${BULLET_TOP_MARGIN}px`,
-            ['&[data-active][data-with-child]']: {
+            '&[data-active][data-with-child]': {
               color: 'inherit',
             },
           },
@@ -77,7 +79,7 @@ function BodyNavigation() {
 
 const TimelineWrapper = styled.div`
   width: 100%;
-  padding: 0 0 0 60px;
+  padding: 0 0 0 40px;
 
   .mantine-Timeline-itemBullet {
     width: 34px;
@@ -105,7 +107,9 @@ const TimelineText = styled.div<{ active: boolean }>`
   font-weight: 700;
   line-height: 1.4;
   padding: 12px;
-  transition: margin-left 0.3s ease, padding 0.3s ease;
+  transition:
+    margin-left 0.3s ease,
+    padding 0.3s ease;
   border-radius: 8px;
   cursor: pointer;
 

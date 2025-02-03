@@ -1,14 +1,21 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MessageEntity, MessageRepository, SubscriberRepository, SubscriberEntity, MemberRepository } from '@novu/dal';
-import { ChannelTypeEnum } from '@novu/shared';
 import {
-  WsQueueService,
+  ChannelTypeEnum,
+  FeatureFlagsKeysEnum,
+  INVITE_TEAM_MEMBER_NUDGE_PAYLOAD_KEY,
+  WebSocketEventEnum,
+} from '@novu/shared';
+import {
+  WebSocketsQueueService,
   AnalyticsService,
   InvalidateCacheService,
   CachedEntity,
   buildFeedKey,
   buildMessageCountKey,
   buildSubscriberKey,
+  GetFeatureFlag,
+  GetFeatureFlagCommand,
 } from '@novu/application-generic';
 
 import { MarkEnum, MarkMessageAsCommand } from './mark-message-as.command';
@@ -18,10 +25,11 @@ export class MarkMessageAs {
   constructor(
     private invalidateCache: InvalidateCacheService,
     private messageRepository: MessageRepository,
-    private wsQueueService: WsQueueService,
+    private webSocketsQueueService: WebSocketsQueueService,
     private analyticsService: AnalyticsService,
     private subscriberRepository: SubscriberRepository,
-    private memberRepository: MemberRepository
+    private memberRepository: MemberRepository,
+    private getFeatureFlag: GetFeatureFlag
   ) {}
 
   async execute(command: MarkMessageAsCommand): Promise<MessageEntity[]> {
@@ -54,7 +62,6 @@ export class MarkMessageAs {
         $in: command.messageIds,
       },
     });
-
     if (command.mark.seen != null) {
       await this.updateServices(command, subscriber, messages, MarkEnum.SEEN);
     }
@@ -66,44 +73,44 @@ export class MarkMessageAs {
     return messages;
   }
 
-  private async updateServices(command: MarkMessageAsCommand, subscriber, messages, marked: string) {
-    const [admin, count] = await Promise.all([
-      this.memberRepository.getOrganizationAdminAccount(command.organizationId),
-      this.messageRepository.getCount(command.environmentId, subscriber._id, ChannelTypeEnum.IN_APP, {
-        [marked]: false,
-      }),
-    ]);
+  private async updateServices(command: MarkMessageAsCommand, subscriber, messages, marked: MarkEnum) {
+    this.updateSocketCount(subscriber, marked);
 
-    this.updateSocketCount(subscriber, count, marked);
-
-    if (admin) {
-      for (const message of messages) {
-        this.analyticsService.track(`Mark as ${marked} - [Notification Center]`, admin._userId, {
-          _subscriber: message._subscriberId,
-          _organization: command.organizationId,
-          _template: message._templateId,
-        });
-      }
+    for (const message of messages) {
+      this.analyticsService.mixpanelTrack(`Mark as ${marked} - [Notification Center]`, '', {
+        _subscriber: message._subscriberId,
+        _organization: command.organizationId,
+        _template: message._templateId,
+      });
     }
   }
 
-  private updateSocketCount(subscriber: SubscriberEntity, count: number, mark: string) {
-    const eventMessage = `un${mark}_count_changed`;
-    const countKey = `un${mark}Count`;
+  private updateSocketCount(subscriber: SubscriberEntity, mark: MarkEnum) {
+    const eventMessage = mark === MarkEnum.READ ? WebSocketEventEnum.UNREAD : WebSocketEventEnum.UNSEEN;
 
-    this.wsQueueService.bullMqService.add(
-      'sendMessage',
-      {
+    this.webSocketsQueueService.add({
+      name: 'sendMessage',
+      data: {
         event: eventMessage,
         userId: subscriber._id,
-        payload: {
-          [countKey]: count,
-        },
+        _environmentId: subscriber._environmentId,
       },
-      {},
-      subscriber._organizationId
-    );
+      groupId: subscriber._organizationId,
+    });
   }
+
+  private async sendAnalyticsEventForInviteTeamNudge(messages: MessageEntity[]) {
+    const inviteTeamMemberNudgeMessage = messages.find(
+      (message) => message?.payload[INVITE_TEAM_MEMBER_NUDGE_PAYLOAD_KEY] === true
+    );
+
+    if (inviteTeamMemberNudgeMessage) {
+      this.analyticsService.track('Invite Nudge Seen', inviteTeamMemberNudgeMessage._subscriberId, {
+        _organization: inviteTeamMemberNudgeMessage._organizationId,
+      });
+    }
+  }
+
   @CachedEntity({
     builder: (command: { subscriberId: string; _environmentId: string }) =>
       buildSubscriberKey({

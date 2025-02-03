@@ -1,10 +1,9 @@
-import { mapFormToCreateNotificationTemplate } from '../components/templateToFormMappers';
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { INotificationTrigger, WorkflowCreationSourceEnum } from '@novu/shared';
 import { IForm } from '../components/formTypes';
-import { INotificationTrigger } from '@novu/shared';
+import { mapFormToCreateNotificationTemplate } from '../components/templateToFormMappers';
 import { useTemplateController } from '../components/useTemplateController';
-import { TemplateCreationSourceEnum } from '../shared';
 
 export const useCreate = (
   templateId: string,
@@ -35,7 +34,7 @@ export const useCreate = (
           draft: false,
         },
         params: {
-          __source: TemplateCreationSourceEnum.EDITOR,
+          __source: WorkflowCreationSourceEnum.EDITOR,
         },
       });
       setTrigger(response.triggers[0]);
@@ -43,5 +42,6 @@ export const useCreate = (
     };
 
     submit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templateId, groups, localStorage.getItem('blueprintId')]);
 };

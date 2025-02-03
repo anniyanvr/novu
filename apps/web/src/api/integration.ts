@@ -21,12 +21,16 @@ export function updateIntegration(integrationId: string, data: IUpdateIntegratio
   return api.put(`/v1/integrations/${integrationId}`, data);
 }
 
+export function setIntegrationAsPrimary(integrationId: string) {
+  return api.post(`/v1/integrations/${integrationId}/set-primary`, {});
+}
+
 export function deleteIntegration(integrationId: string) {
   return api.delete(`/v1/integrations/${integrationId}`);
 }
 
-export function getWebhookSupportStatus(providerId: string) {
-  return api.get(`/v1/integrations/webhook/provider/${providerId}/status`);
+export function getWebhookSupportStatus(integrationId: string) {
+  return api.get(`/v1/integrations/webhook/provider/${integrationId}/status`);
 }
 
 export function getInAppActivated() {

@@ -1,15 +1,15 @@
-import { LayoutEntity, LayoutRepository } from '@novu/dal';
-import { Injectable, Inject } from '@nestjs/common';
-import { isReservedVariableName } from '@novu/shared';
-import { AnalyticsService } from '@novu/application-generic';
-import { CreateLayoutCommand } from './create-layout.command';
+import { Injectable, ConflictException } from '@nestjs/common';
 
+import { LayoutEntity, LayoutRepository } from '@novu/dal';
+import { isReservedVariableName } from '@novu/shared';
+import { AnalyticsService, ContentService } from '@novu/application-generic';
+
+import { CreateLayoutCommand } from './create-layout.command';
 import { CreateLayoutChangeCommand, CreateLayoutChangeUseCase } from '../create-layout-change';
 import { SetDefaultLayoutCommand, SetDefaultLayoutUseCase } from '../set-default-layout';
 import { LayoutDto } from '../../dtos';
 import { ChannelTypeEnum, ITemplateVariable, LayoutId } from '../../types';
 import { ApiException } from '../../../shared/exceptions/api.exception';
-import { ContentService } from '../../../shared/helpers/content.service';
 
 @Injectable()
 export class CreateLayoutUseCase {
@@ -25,6 +25,16 @@ export class CreateLayoutUseCase {
     const hasBody = command.content.includes('{{{body}}}');
     if (!hasBody) {
       throw new ApiException('Layout content must contain {{{body}}}');
+    }
+    const layoutIdentifierExist = await this.layoutRepository.findOne({
+      _organizationId: command.organizationId,
+      _environmentId: command.environmentId,
+      identifier: command.identifier,
+    });
+    if (layoutIdentifierExist) {
+      throw new ConflictException(
+        `Layout with identifier: ${command.identifier} already exists under environment ${command.environmentId}`
+      );
     }
     const entity = this.mapToEntity({ ...command, variables });
 
@@ -74,6 +84,7 @@ export class CreateLayoutUseCase {
       contentType: 'customHtml',
       description: domainEntity.description,
       name: domainEntity.name,
+      identifier: domainEntity.identifier,
       variables: domainEntity.variables,
       isDefault: domainEntity.isDefault ?? false,
       deleted: false,

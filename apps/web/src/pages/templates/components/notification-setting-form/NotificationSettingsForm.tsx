@@ -2,21 +2,19 @@ import { ActionIcon, Grid, Stack } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Controller, useFormContext } from 'react-hook-form';
-import { INotificationTrigger } from '@novu/shared';
+import type { IResponseError, INotificationTrigger } from '@novu/shared';
 
+import { Input, Select, Switch, Tooltip, Check, Copy, When } from '@novu/design-system';
+import { useParams } from 'react-router-dom';
 import { api } from '../../../../api/api.client';
-import { Input, Select, Switch, Tooltip } from '../../../../design-system';
-import { Check, Copy } from '../../../../design-system/icons';
-import { useEnvController, useNotificationGroup } from '../../../../hooks';
+import { useEnvironment, useNotificationGroup } from '../../../../hooks';
 import type { IForm } from '../formTypes';
 import { useTemplateEditorForm } from '../TemplateEditorFormProvider';
-import { useParams } from 'react-router-dom';
 import { useStatusChangeControllerHook } from '../useStatusChangeController';
 
 export const NotificationSettingsForm = ({ trigger }: { trigger?: INotificationTrigger }) => {
   const idClipboard = useClipboard({ timeout: 1000 });
   const queryClient = useQueryClient();
-  const { readonly } = useEnvController();
   const {
     formState: { errors },
     setValue,
@@ -24,6 +22,7 @@ export const NotificationSettingsForm = ({ trigger }: { trigger?: INotificationT
   } = useFormContext<IForm>();
 
   const { template } = useTemplateEditorForm();
+  const { readonly, bridge } = useEnvironment({ bridge: template?.bridge });
   const { templateId = '' } = useParams<{ templateId: string }>();
 
   const { isTemplateActive, changeActiveStatus, isStatusChangeLoading } = useStatusChangeControllerHook(
@@ -34,7 +33,7 @@ export const NotificationSettingsForm = ({ trigger }: { trigger?: INotificationT
   const { groups, loading: loadingGroups } = useNotificationGroup();
   const { isLoading: loadingCreateGroup, mutateAsync: createNotificationGroup } = useMutation<
     { name: string; _id: string },
-    { error: string; message: string; statusCode: number },
+    IResponseError,
     {
       name: string;
     }
@@ -44,7 +43,7 @@ export const NotificationSettingsForm = ({ trigger }: { trigger?: INotificationT
     },
   });
 
-  function addGroupItem(newGroup: string): undefined {
+  function addGroupItem(newGroup: string) {
     if (newGroup) {
       createNotificationGroup({
         name: newGroup,
@@ -52,63 +51,63 @@ export const NotificationSettingsForm = ({ trigger }: { trigger?: INotificationT
         setTimeout(() => {
           setValue('notificationGroupId', response._id);
         }, 0);
-
-        return;
       });
     }
-
-    return;
   }
 
   return (
     <>
-      <Grid gutter={0}>
-        <Grid.Col span={6}>
-          <Stack
-            justify="center"
-            sx={{
-              height: '100%',
-            }}
-          >
-            <Switch
-              label={isTemplateActive ? 'Active' : 'Inactive'}
-              loading={isStatusChangeLoading}
-              disabled={readonly}
-              data-test-id="active-toggle-switch"
-              onChange={(e) => changeActiveStatus(e.target.checked)}
-              checked={isTemplateActive || false}
+      <When truthy={!bridge}>
+        <Grid gutter={0} mt={-8} mb={-8}>
+          <Grid.Col span={6}>
+            <Stack
+              justify="center"
+              sx={{
+                height: '100%',
+              }}
+            >
+              <Switch
+                label={isTemplateActive ? 'Active' : 'Inactive'}
+                loading={isStatusChangeLoading}
+                disabled={readonly}
+                data-test-id="active-toggle-switch"
+                onChange={(e) => changeActiveStatus(e.target.checked)}
+                checked={isTemplateActive || false}
+              />
+            </Stack>
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Controller
+              name="notificationGroupId"
+              defaultValue=""
+              control={control}
+              render={({ field }) => {
+                return (
+                  <>
+                    <Select
+                      {...field}
+                      data-test-id="groupSelector"
+                      loading={loadingGroups || loadingCreateGroup}
+                      disabled={readonly}
+                      creatable
+                      searchable
+                      error={errors.notificationGroupId?.message}
+                      getCreateLabel={(newGroup) => (
+                        <div data-test-id="submit-category-btn">+ Create group {newGroup}</div>
+                      )}
+                      // @ts-expect-error - addGroupItem is not typed correctly
+                      onCreate={addGroupItem}
+                      placeholder="Attach workflow to group"
+                      data={(groups || []).map((item) => ({ label: item.name, value: item._id }))}
+                    />
+                  </>
+                );
+              }}
             />
-          </Stack>
-        </Grid.Col>
-        <Grid.Col span={6}>
-          <Controller
-            name="notificationGroupId"
-            defaultValue=""
-            control={control}
-            render={({ field }) => {
-              return (
-                <>
-                  <Select
-                    {...field}
-                    data-test-id="groupSelector"
-                    loading={loadingGroups || loadingCreateGroup}
-                    disabled={readonly}
-                    creatable
-                    searchable
-                    error={errors.notificationGroupId?.message}
-                    getCreateLabel={(newGroup) => (
-                      <div data-test-id="submit-category-btn">+ Create group {newGroup}</div>
-                    )}
-                    onCreate={addGroupItem}
-                    placeholder="Attach workflow to group"
-                    data={(groups || []).map((item) => ({ label: item.name, value: item._id }))}
-                  />
-                </>
-              );
-            }}
-          />
-        </Grid.Col>
-      </Grid>
+          </Grid.Col>
+        </Grid>
+      </When>
+
       <Controller
         control={control}
         name="name"
@@ -137,6 +136,7 @@ export const NotificationSettingsForm = ({ trigger }: { trigger?: INotificationT
               value={field.value || ''}
               error={fieldState.error?.message}
               label="Trigger identifier"
+              description={'Used to identify your workflow when triggering it via the API'}
               disabled={readonly}
               rightSection={
                 <Tooltip data-test-id={'Tooltip'} label={idClipboard.copied ? 'Copied!' : 'Copy Key'}>
@@ -164,6 +164,33 @@ export const NotificationSettingsForm = ({ trigger }: { trigger?: INotificationT
             placeholder="Describe your workflow..."
           />
         )}
+      />
+
+      <Controller
+        name="tags"
+        control={control}
+        render={({ field }) => {
+          return (
+            <>
+              <Select
+                {...field}
+                data-test-id="tagsSelector"
+                disabled={readonly}
+                creatable
+                label={'Tags'}
+                description={
+                  'Use tags to organize your workflows, e.g. to filter them when displaying user preferences in the notification center'
+                }
+                searchable
+                type={'multiselect'}
+                error={errors.tags?.message}
+                getCreateLabel={(tag) => <div data-test-id="submit-tags-btn">+ Create Tag {tag}</div>}
+                placeholder="Attach a tag to identify workflow"
+                data={(field.value || [])?.map((item) => ({ label: item, value: item })) || []}
+              />
+            </>
+          );
+        }}
       />
     </>
   );

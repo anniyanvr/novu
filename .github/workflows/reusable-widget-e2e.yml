@@ -1,12 +1,14 @@
-# This is a basic workflow to help you get started with Actions
 name: Test E2E WIDGET
+
+env:
+  NX_CLOUD_ACCESS_TOKEN: ${{ secrets.NX_CLOUD_ACCESS_TOKEN }}
 
 # Controls when the action will run. Triggers the workflow on push or pull request
 on:
   workflow_call:
     inputs:
-      submodules:
-        description: 'The flag controlling whether we want submodules to checkout'
+      ee:
+        description: 'use the ee version of worker'
         required: false
         default: false
         type: boolean
@@ -18,17 +20,6 @@ jobs:
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
     timeout-minutes: 80
-
-    strategy:
-      # when one test fails, DO NOT cancel the other
-      # containers, because this will kill Cypress processes
-      # leaving the Dashboard hanging ...
-      # https://github.com/cypress-io/github-action/issues/48
-      fail-fast: false
-      matrix:
-        # run 3 copies of the current job in parallel
-        containers: [1, 2]
-
     permissions:
       contents: read
       packages: write
@@ -40,18 +31,18 @@ jobs:
       - id: setup
         run: |
           if ! [[ -z "${{ secrets.SUBMODULES_TOKEN }}" ]]; then
-            echo ::set-output has_token=true
+            echo "has_token=true" >> $GITHUB_OUTPUT
           else
-            echo ::set-output has_token=false
+            echo "has_token=false" >> $GITHUB_OUTPUT
           fi
       # checkout with submodules if token is provided
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         if: steps.setup.outputs.has_token == 'true'
         with:
-          submodules: ${{ inputs.submodules }}
+          submodules: ${{ inputs.ee }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-       # checkout without submodules
-      - uses: actions/checkout@v3
+      # else checkout without submodules if the token is not provided
+      - uses: actions/checkout@v4
         if: steps.setup.outputs.has_token != 'true'
 
       - uses: ./.github/actions/setup-project
@@ -59,15 +50,22 @@ jobs:
         with:
           cypress_version: 12.9.0
           cypress: true
-      - uses: mansagroup/nrwl-nx-action@v3
-        with:
-          targets: lint
-          projects: '@novu/widget'
+          submodules: ${{ inputs.ee && steps.setup.outputs.has_token == 'true' }}
+
+      - uses: ./.github/actions/setup-redis-cluster
 
       - uses: mansagroup/nrwl-nx-action@v3
         with:
           targets: build
-          projects: '@novu/widget,@novu/embed,@novu/api,@novu/worker,@novu/ws'
+          args: --skip-nx-cache
+          projects: '@novu/widget,@novu/embed,@novu/api-service,@novu/worker,@novu/ws'
+
+      - uses: ./.github/actions/run-backend
+        with:
+          cypress_github_oauth_client_id: ${{ secrets.CYPRESS_GITHUB_OAUTH_CLIENT_ID }}
+          cypress_github_oauth_client_secret: ${{ secrets.CYPRESS_GITHUB_OAUTH_CLIENT_SECRET }}
+          launch_darkly_sdk_key: ${{ secrets.LAUNCH_DARKLY_SDK_KEY }}
+          ci_ee_test: ${{ steps.setup.outputs.has_token }}
 
       # Runs a single command using the runners shell
       - name: Start Client
@@ -76,33 +74,12 @@ jobs:
       - name: Start WS
         env:
           NODE_ENV: 'test'
-          TZ: 'UTC'
         run: |
-          cp apps/ws/src/.env.test apps/ws/dist/src/.env.test
+          cp apps/ws/src/.env.test apps/ws/dist/.env.test
           cd apps/ws && pnpm start:prod &
 
-      - name: Start API in TEST
-        env:
-          GITHUB_OAUTH_CLIENT_ID: ${{ secrets.CYPRESS_GITHUB_OAUTH_CLIENT_ID }}
-          GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.CYPRESS_GITHUB_OAUTH_CLIENT_SECRET }}
-          NODE_ENV: "test"
-          PORT: "1336"
-          TZ: "UTC"
-          GITHUB_OAUTH_REDIRECT: "http://localhost:1336/v1/auth/github/callback"
-        run: cd apps/api && pnpm start:build &
-
-      - name: Start worker
-        env:
-          NODE_ENV: "test"
-          PORT: 1342
-          TZ: "UTC"
-        run: cd apps/worker && pnpm start:prod &
-
-      - name: Install wait-on plugin
-        run: npm i -g wait-on
-
-      - name: Wait on Services
-        run: wait-on --timeout=180000 http://localhost:1336/v1/health-check http://localhost:1342/v1/health-check http://localhost:1340/v1/health-check http://localhost:3500
+      - name: Wait on Widget and WS Services
+        run: wait-on --timeout=180000 http://127.0.0.1:1340/v1/health-check http://127.0.0.1:3500/
 
       - name: Cypress install
         if: steps.setup-project.outputs.cypress_cache_hit != 'true'
@@ -110,28 +87,34 @@ jobs:
         run: pnpm cypress install
 
       - name: Cypress run
-        uses: cypress-io/github-action@v2
+        uses: cypress-io/github-action@v6
         env:
           NODE_ENV: test
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_WIDGET_KEY }}
         with:
           working-directory: apps/widget
-          wait-on: http://localhost:3500
+          wait-on: http://127.0.0.1:3500/
           browser: chrome
           install: false
           record: true
-          parallel: true
+          parallel: false
           config-file: cypress.config.ts
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: cypress-screenshots
           path: apps/widget/cypress/screenshots
       # Test run video was always captured, so this action uses "always()" condition
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cypress-videos
           path: apps/widget/cypress/videos
+
+      - name: Send Slack notifications
+        uses: ./.github/actions/slack-notify-on-failure
+        if: failure()
+        with:
+          slackWebhookURL: ${{ secrets.SLACK_WEBHOOK_URL_ENG_FEED_GITHUB }}

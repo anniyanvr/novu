@@ -1,12 +1,12 @@
 import { expect } from 'chai';
-import * as request from 'supertest';
-import * as defaults from 'superagent-defaults';
+import request from 'supertest';
+import defaults from 'superagent-defaults';
 
 describe('Health-check', () => {
   let testAgent;
 
   before(async () => {
-    testAgent = defaults(request(`http://localhost:${process.env.PORT}`));
+    testAgent = defaults(request(`http://127.0.0.1:${process.env.PORT}`));
   });
 
   describe('/health-check (GET)', () => {
@@ -15,7 +15,7 @@ describe('Health-check', () => {
         body: { data },
       } = await testAgent.get('/v1/health-check');
 
-      expect(data.status).to.equal('ok');
+      expect(data?.status).to.equal('ok');
     });
   });
 });

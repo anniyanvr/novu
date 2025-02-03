@@ -1,8 +1,8 @@
 import { useFormContext } from 'react-hook-form';
 import { useMantineColorScheme } from '@mantine/core';
 import { DigestTypeEnum, DigestUnitEnum } from '@novu/shared';
+import { colors } from '@novu/design-system';
 
-import { colors } from '../../../../design-system';
 import { pluralizeTime } from '../../../../utils';
 import { TimedDigestWillBeSentHeader } from './TimedDigestWillBeSentHeader';
 
@@ -15,8 +15,11 @@ const DIGEST_UNIT_TYPE_TO_SINGULAR = {
   [DigestUnitEnum.MONTHS]: 'month',
 };
 
-const Highlight = ({ children }) => {
+const Highlight = ({ children, isHighlight }) => {
   const { colorScheme } = useMantineColorScheme();
+  if (!isHighlight) {
+    return children;
+  }
 
   return (
     <b
@@ -29,25 +32,24 @@ const Highlight = ({ children }) => {
   );
 };
 
-export const WillBeSentHeader = ({ index }: { index: number }) => {
+export const WillBeSentHeader = ({ path, isHighlight = true }: { path: string; isHighlight?: boolean }) => {
   const { watch } = useFormContext();
-
-  const type = watch(`steps.${index}.digestMetadata.type`);
+  const type = watch(`${path}.digestMetadata.type`);
 
   if (type === DigestTypeEnum.TIMED) {
-    return <TimedDigestWillBeSentHeader index={index} />;
+    return <TimedDigestWillBeSentHeader path={path} isHighlight={isHighlight} />;
   }
 
-  const unit = watch(`steps.${index}.digestMetadata.regular.unit`);
-  const amount = watch(`steps.${index}.digestMetadata.regular.amount`);
-  const backoff = watch(`steps.${index}.digestMetadata.regular.backoff`);
+  const unit = watch(`${path}.digestMetadata.regular.unit`);
+  const amount = watch(`${path}.digestMetadata.regular.amount`);
+  const backoff = watch(`${path}.digestMetadata.regular.backoff`);
 
   return (
     <>
-      after <Highlight>{pluralizeTime(amount, DIGEST_UNIT_TYPE_TO_SINGULAR[unit])}</Highlight>
+      after <Highlight isHighlight={isHighlight}>{pluralizeTime(amount, DIGEST_UNIT_TYPE_TO_SINGULAR[unit])}</Highlight>
       {backoff ? (
         <>
-          <br /> only if <Highlight>frequent events</Highlight> occur
+          {isHighlight && <br />} only if <Highlight isHighlight={isHighlight}>frequent events</Highlight> occur
         </>
       ) : (
         ' occur on'

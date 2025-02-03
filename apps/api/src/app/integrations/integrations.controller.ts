@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   ClassSerializerInterceptor,
   Controller,
@@ -7,21 +8,21 @@ import {
   Param,
   Post,
   Put,
-  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { ChannelTypeEnum, IJwtPayload, MemberRoleEnum } from '@novu/shared';
-import { CalculateLimitNovuIntegration, CalculateLimitNovuIntegrationCommand } from '@novu/application-generic';
-import { ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-
-import { JwtAuthGuard } from '../auth/framework/auth.guard';
+import { ChannelTypeEnum, UserSessionData } from '@novu/shared';
+import {
+  CalculateLimitNovuIntegration,
+  CalculateLimitNovuIntegrationCommand,
+  OtelSpan,
+} from '@novu/application-generic';
+import { ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserSession } from '../shared/framework/user.decorator';
 import { CreateIntegration } from './usecases/create-integration/create-integration.usecase';
 import { CreateIntegrationRequestDto } from './dtos/create-integration-request.dto';
 import { CreateIntegrationCommand } from './usecases/create-integration/create-integration.command';
 import { GetIntegrations } from './usecases/get-integrations/get-integrations.usecase';
 import { GetIntegrationsCommand } from './usecases/get-integrations/get-integrations.command';
-import { Roles } from '../auth/framework/roles.decorator';
 import { UpdateIntegrationRequestDto } from './dtos/update-integration.dto';
 import { UpdateIntegration } from './usecases/update-integration/update-integration.usecase';
 import { UpdateIntegrationCommand } from './usecases/update-integration/update-integration.command';
@@ -34,14 +35,23 @@ import { GetWebhookSupportStatus } from './usecases/get-webhook-support-status/g
 import { GetWebhookSupportStatusCommand } from './usecases/get-webhook-support-status/get-webhook-support-status.command';
 import { GetInAppActivatedCommand } from './usecases/get-in-app-activated/get-in-app-activated.command';
 import { GetInAppActivated } from './usecases/get-in-app-activated/get-in-app-activated.usecase';
-import { ApiResponse } from '../shared/framework/response.decorator';
+import {
+  ApiCommonResponses,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiResponse,
+} from '../shared/framework/response.decorator';
 import { ChannelTypeLimitDto } from './dtos/get-channel-type-limit.sto';
 import { GetActiveIntegrationsCommand } from './usecases/get-active-integration/get-active-integration.command';
-import { GetActiveIntegrationResponseDto } from './dtos/get-active-integration-response.dto';
+import { SetIntegrationAsPrimary } from './usecases/set-integration-as-primary/set-integration-as-primary.usecase';
+import { SetIntegrationAsPrimaryCommand } from './usecases/set-integration-as-primary/set-integration-as-primary.command';
+import { UserAuthentication } from '../shared/framework/swagger/api.key.security';
+import { SdkGroupName, SdkMethodName } from '../shared/framework/swagger/sdk.decorators';
 
+@ApiCommonResponses()
 @Controller('/integrations')
 @UseInterceptors(ClassSerializerInterceptor)
-@UseGuards(JwtAuthGuard)
+@UserAuthentication()
 @ApiTags('Integrations')
 export class IntegrationsController {
   constructor(
@@ -51,13 +61,14 @@ export class IntegrationsController {
     private getWebhookSupportStatusUsecase: GetWebhookSupportStatus,
     private createIntegrationUsecase: CreateIntegration,
     private updateIntegrationUsecase: UpdateIntegration,
+    private setIntegrationAsPrimaryUsecase: SetIntegrationAsPrimary,
     private removeIntegrationUsecase: RemoveIntegration,
     private calculateLimitNovuIntegration: CalculateLimitNovuIntegration
   ) {}
 
   @Get('/')
   @ApiOkResponse({
-    type: IntegrationResponseDto,
+    type: [IntegrationResponseDto],
     description: 'The list of integrations belonging to the organization that are successfully returned.',
   })
   @ApiOperation({
@@ -66,7 +77,7 @@ export class IntegrationsController {
       'Return all the integrations the user has created for that organization. Review v.0.17.0 changelog for a breaking change',
   })
   @ExternalApiAccessible()
-  async getIntegrations(@UserSession() user: IJwtPayload): Promise<IntegrationResponseDto[]> {
+  async listIntegrations(@UserSession() user: UserSessionData): Promise<IntegrationResponseDto[]> {
     return await this.getIntegrationsUsecase.execute(
       GetIntegrationsCommand.create({
         environmentId: user.environmentId,
@@ -78,7 +89,7 @@ export class IntegrationsController {
 
   @Get('/active')
   @ApiOkResponse({
-    type: IntegrationResponseDto,
+    type: [IntegrationResponseDto],
     description: 'The list of active integrations belonging to the organization that are successfully returned.',
   })
   @ApiOperation({
@@ -87,7 +98,8 @@ export class IntegrationsController {
       'Return all the active integrations the user has created for that organization. Review v.0.17.0 changelog for a breaking change',
   })
   @ExternalApiAccessible()
-  async getActiveIntegrations(@UserSession() user: IJwtPayload): Promise<GetActiveIntegrationResponseDto[]> {
+  @SdkMethodName('listActive')
+  async getActiveIntegrations(@UserSession() user: UserSessionData): Promise<IntegrationResponseDto[]> {
     return await this.getActiveIntegrationsUsecase.execute(
       GetActiveIntegrationsCommand.create({
         environmentId: user.environmentId,
@@ -97,7 +109,7 @@ export class IntegrationsController {
     );
   }
 
-  @Get('/webhook/provider/:providerId/status')
+  @Get('/webhook/provider/:providerOrIntegrationId/status')
   @ApiOkResponse({
     type: Boolean,
     description: 'The status of the webhook for the provider requested',
@@ -107,16 +119,17 @@ export class IntegrationsController {
     description:
       'Return the status of the webhook for this provider, if it is supported or if it is not based on a boolean value',
   })
+  @SdkGroupName('Integrations.Webhooks')
   @ExternalApiAccessible()
   async getWebhookSupportStatus(
-    @UserSession() user: IJwtPayload,
-    @Param('providerId') providerId: string
+    @UserSession() user: UserSessionData,
+    @Param('providerOrIntegrationId') providerOrIntegrationId: string
   ): Promise<boolean> {
     return await this.getWebhookSupportStatusUsecase.execute(
       GetWebhookSupportStatusCommand.create({
         environmentId: user.environmentId,
         organizationId: user.organizationId,
-        providerId: providerId,
+        providerOrIntegrationId,
         userId: user._id,
       })
     );
@@ -130,27 +143,35 @@ export class IntegrationsController {
   })
   @ExternalApiAccessible()
   async createIntegration(
-    @UserSession() user: IJwtPayload,
+    @UserSession() user: UserSessionData,
     @Body() body: CreateIntegrationRequestDto
   ): Promise<IntegrationResponseDto> {
-    return await this.createIntegrationUsecase.execute(
-      CreateIntegrationCommand.create({
-        userId: user._id,
-        name: body.name,
-        identifier: body.identifier,
-        environmentId: body._environmentId ?? user.environmentId,
-        organizationId: user.organizationId,
-        providerId: body.providerId,
-        channel: body.channel,
-        credentials: body.credentials,
-        active: body.active ?? false,
-        check: body.check ?? true,
-      })
-    );
+    try {
+      return await this.createIntegrationUsecase.execute(
+        CreateIntegrationCommand.create({
+          userId: user._id,
+          name: body.name,
+          identifier: body.identifier,
+          environmentId: body._environmentId ?? user.environmentId,
+          organizationId: user.organizationId,
+          providerId: body.providerId,
+          channel: body.channel,
+          credentials: body.credentials,
+          active: body.active ?? false,
+          check: body.check ?? false,
+          conditions: body.conditions,
+        })
+      );
+    } catch (e) {
+      if (e.message.includes('Integration validation failed') || e.message.includes('Cast to embedded')) {
+        throw new BadRequestException(e.message);
+      }
+
+      throw e;
+    }
   }
 
   @Put('/:integrationId')
-  @Roles(MemberRoleEnum.ADMIN)
   @ApiResponse(IntegrationResponseDto)
   @ApiNotFoundResponse({
     description: 'The integration with the integrationId provided does not exist in the database.',
@@ -159,23 +180,57 @@ export class IntegrationsController {
     summary: 'Update integration',
   })
   @ExternalApiAccessible()
-  updateIntegrationById(
-    @UserSession() user: IJwtPayload,
+  async updateIntegrationById(
+    @UserSession() user: UserSessionData,
     @Param('integrationId') integrationId: string,
     @Body() body: UpdateIntegrationRequestDto
   ): Promise<IntegrationResponseDto> {
-    return this.updateIntegrationUsecase.execute(
-      UpdateIntegrationCommand.create({
+    try {
+      return await this.updateIntegrationUsecase.execute(
+        UpdateIntegrationCommand.create({
+          userId: user._id,
+          name: body.name,
+          identifier: body.identifier,
+          environmentId: body._environmentId,
+          userEnvironmentId: user.environmentId,
+          organizationId: user.organizationId,
+          integrationId,
+          credentials: body.credentials,
+          removeNovuBranding: body.removeNovuBranding,
+          active: body.active,
+          check: body.check ?? false,
+          conditions: body.conditions,
+        })
+      );
+    } catch (e) {
+      if (e.message.includes('Integration validation failed') || e.message.includes('Cast to embedded')) {
+        throw new BadRequestException(e.message);
+      }
+
+      throw e;
+    }
+  }
+
+  @Post('/:integrationId/set-primary')
+  @ApiResponse(IntegrationResponseDto)
+  @ApiNotFoundResponse({
+    description: 'The integration with the integrationId provided does not exist in the database.',
+  })
+  @ApiOperation({
+    summary: 'Set integration as primary',
+  })
+  @ExternalApiAccessible()
+  @SdkMethodName('setAsPrimary')
+  setIntegrationAsPrimary(
+    @UserSession() user: UserSessionData,
+    @Param('integrationId') integrationId: string
+  ): Promise<IntegrationResponseDto> {
+    return this.setIntegrationAsPrimaryUsecase.execute(
+      SetIntegrationAsPrimaryCommand.create({
         userId: user._id,
-        name: body.name,
-        identifier: body.identifier,
-        environmentId: body._environmentId,
-        userEnvironmentId: user.environmentId,
+        environmentId: user.environmentId,
         organizationId: user.organizationId,
         integrationId,
-        credentials: body.credentials,
-        active: body.active,
-        check: body.check ?? true,
       })
     );
   }
@@ -187,11 +242,12 @@ export class IntegrationsController {
   })
   @ExternalApiAccessible()
   async removeIntegration(
-    @UserSession() user: IJwtPayload,
+    @UserSession() user: UserSessionData,
     @Param('integrationId') integrationId: string
   ): Promise<IntegrationResponseDto[]> {
     return await this.removeIntegrationUsecase.execute(
       RemoveIntegrationCommand.create({
+        userId: user._id,
         environmentId: user.environmentId,
         organizationId: user.organizationId,
         integrationId,
@@ -200,9 +256,10 @@ export class IntegrationsController {
   }
 
   @Get('/:channelType/limit')
-  @ApiResponse(ChannelTypeLimitDto)
+  @ApiExcludeEndpoint()
+  @OtelSpan()
   async getProviderLimit(
-    @UserSession() user: IJwtPayload,
+    @UserSession() user: UserSessionData,
     @Param('channelType') channelType: ChannelTypeEnum
   ): Promise<ChannelTypeLimitDto> {
     const result = await this.calculateLimitNovuIntegration.execute(
@@ -221,7 +278,8 @@ export class IntegrationsController {
   }
 
   @Get('/in-app/status')
-  async getInAppActivated(@UserSession() user: IJwtPayload) {
+  @ApiExcludeEndpoint()
+  async getInAppActivated(@UserSession() user: UserSessionData) {
     return await this.getInAppActivatedUsecase.execute(
       GetInAppActivatedCommand.create({
         organizationId: user.organizationId,

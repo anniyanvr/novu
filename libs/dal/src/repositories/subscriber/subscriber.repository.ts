@@ -1,20 +1,16 @@
-import { SoftDeleteModel } from 'mongoose-delete';
 import { FilterQuery } from 'mongoose';
-
-import { SubscriberEntity, SubscriberDBModel } from './subscriber.entity';
+import { DirectionEnum, EnvironmentId, ISubscribersDefine, OrganizationId, SubscriberDto } from '@novu/shared';
+import { SubscriberDBModel, SubscriberEntity } from './subscriber.entity';
 import { Subscriber } from './subscriber.schema';
 import { IExternalSubscribersEntity } from './types';
 import { BaseRepository } from '../base-repository';
 import { DalException } from '../../shared';
-import type { EnforceEnvOrOrgIds } from '../../types/enforce';
-
-type SubscriberQuery = FilterQuery<SubscriberDBModel> & EnforceEnvOrOrgIds;
+import type { EnforceEnvOrOrgIds } from '../../types';
+import { BulkCreateSubscriberEntity } from './bulk.create.subscriber.entity';
 
 export class SubscriberRepository extends BaseRepository<SubscriberDBModel, SubscriberEntity, EnforceEnvOrOrgIds> {
-  private subscriber: SoftDeleteModel;
   constructor() {
     super(Subscriber, SubscriberEntity);
-    this.subscriber = Subscriber;
   }
 
   async findBySubscriberId(
@@ -32,6 +28,72 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
     );
   }
 
+  async bulkCreateSubscribers(
+    subscribers: ISubscribersDefine[],
+    environmentId: EnvironmentId,
+    organizationId: OrganizationId
+  ): Promise<BulkCreateSubscriberEntity> {
+    const bulkWriteOps = subscribers.map((subscriber) => {
+      const { subscriberId, ...rest } = subscriber;
+
+      return {
+        updateOne: {
+          filter: { subscriberId, _environmentId: environmentId, _organizationId: organizationId },
+          update: { $set: { ...rest, deleted: false } },
+          upsert: true,
+        },
+      };
+    });
+
+    let bulkResponse;
+    try {
+      bulkResponse = await this.bulkWrite(bulkWriteOps);
+    } catch (e: unknown) {
+      if (isErrorWithWriteErrors(e)) {
+        if (!e.writeErrors) {
+          throw new DalException(e.message);
+        }
+        bulkResponse = e.result;
+      } else {
+        throw new DalException('An unknown error occurred');
+      }
+    }
+    const created = bulkResponse.getUpsertedIds();
+    const writeErrors = bulkResponse.getWriteErrors();
+
+    const indexes: number[] = [];
+
+    const insertedSubscribers = created.map((inserted) => {
+      indexes.push(inserted.index);
+
+      return mapToSubscriberObject(subscribers[inserted.index]?.subscriberId);
+    });
+
+    let failed = [];
+    if (writeErrors.length > 0) {
+      failed = writeErrors.map((error) => {
+        indexes.push(error.err.index);
+
+        return {
+          message: error.err.errmsg,
+          subscriberId: error.err.op?.subscriberId,
+        };
+      });
+    }
+
+    const updatedSubscribers = subscribers
+      .filter((subId, index) => !indexes.includes(index))
+      .map((subscriber) => {
+        return mapToSubscriberObject(subscriber.subscriberId);
+      });
+
+    return {
+      updated: updatedSubscribers,
+      created: insertedSubscribers,
+      failed,
+    };
+  }
+
   async searchByExternalSubscriberIds(
     externalSubscribersEntity: IExternalSubscribersEntity
   ): Promise<SubscriberEntity[]> {
@@ -46,7 +108,12 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
     });
   }
 
-  async searchSubscribers(environmentId: string, subscriberIds: string[] = [], emails: string[] = [], search?: string) {
+  async searchSubscribers(
+    environmentId: string,
+    subscriberIds: string[] = [],
+    emails: string[] = [],
+    search?: string
+  ): Promise<string[]> {
     const filters: any = [];
 
     if (emails?.length) {
@@ -79,45 +146,110 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
       );
     }
 
-    return await this.find(
-      {
-        _environmentId: environmentId,
-        $or: filters,
-      },
-      '_id'
-    );
+    return (
+      await this.find(
+        {
+          _environmentId: environmentId,
+          $or: filters,
+        },
+        '_id'
+      )
+    ).map((entity) => entity._id);
   }
 
-  async delete(query: SubscriberQuery) {
-    const foundSubscriber = await this.findOne({
-      _environmentId: query._environmentId,
-      subscriberId: query.subscriberId,
-    });
+  async estimatedDocumentCount(): Promise<number> {
+    return this._model.estimatedDocumentCount();
+  }
 
-    if (!foundSubscriber) {
-      throw new DalException(`Could not find subscriber ${query.subscriberId} to delete`);
+  async listSubscribers(query: {
+    environmentId: string;
+    organizationId: string;
+    limit: number;
+    sortBy: 'updatedAt' | '_id';
+    sortDirection: DirectionEnum;
+    after?: string;
+    before?: string;
+    email?: string;
+    phone?: string;
+    subscriberId?: string;
+    name?: string;
+  }): Promise<{ subscribers: SubscriberEntity[]; next: string | null; previous: string | null }> {
+    if (query.before && query.after) {
+      throw new DalException('Cannot specify both "before" and "after" cursors at the same time.');
     }
 
-    const requestQuery: SubscriberQuery = {
-      _environmentId: foundSubscriber._environmentId,
-      subscriberId: foundSubscriber.subscriberId,
+    const id = query.before || query.after;
+    let subscriber: SubscriberEntity | null = null;
+    if (id) {
+      subscriber = await this.findOne({
+        _environmentId: query.environmentId,
+        _organizationId: query.organizationId,
+        _id: id,
+      });
+      if (!subscriber) {
+        return {
+          subscribers: [],
+          next: null,
+          previous: null,
+        };
+      }
+    }
+
+    const after =
+      query.after && subscriber ? { sortBy: subscriber[query.sortBy], paginateField: subscriber._id } : undefined;
+    const before =
+      query.before && subscriber ? { sortBy: subscriber[query.sortBy], paginateField: subscriber._id } : undefined;
+
+    const pagination = await this.findWithCursorBasedPagination({
+      after,
+      before,
+      paginateField: '_id',
+      limit: query.limit,
+      sortDirection: query.sortDirection,
+      sortBy: query.sortBy,
+      query: {
+        _environmentId: query.environmentId,
+        _organizationId: query.organizationId,
+        $and: [
+          {
+            ...(query.email && { email: query.email }),
+            ...(query.phone && { phone: query.phone }),
+            ...(query.subscriberId && { subscriberId: query.subscriberId }),
+            ...(query.name && {
+              $expr: {
+                $eq: [
+                  {
+                    $trim: {
+                      input: {
+                        $concat: [{ $ifNull: ['$firstName', ''] }, ' ', { $ifNull: ['$lastName', ''] }],
+                      },
+                    },
+                  },
+                  query.name,
+                ],
+              },
+            }),
+          },
+        ],
+      },
+    });
+
+    return {
+      subscribers: pagination.data,
+      next: pagination.next,
+      previous: pagination.previous,
     };
-
-    await this.subscriber.delete(requestQuery);
   }
+}
 
-  async findDeleted(query: SubscriberQuery) {
-    const requestQuery: SubscriberQuery = {
-      _environmentId: query._environmentId,
-      subscriberId: query.subscriberId,
-    };
-
-    const res = await this.subscriber.findDeleted(requestQuery);
-
-    return this.mapEntity(res);
-  }
+function mapToSubscriberObject(subscriberId: string) {
+  return { subscriberId };
 }
 
 function regExpEscape(literalString: string): string {
   return literalString.replace(/[-[\]{}()*+!<=:?./\\^$|#\s,]/g, '\\$&');
+}
+
+function isErrorWithWriteErrors(e: unknown): e is { writeErrors?: any; message?: string; result?: any } {
+  return typeof e === 'object' && e !== null && 'writeErrors' in e;
 }

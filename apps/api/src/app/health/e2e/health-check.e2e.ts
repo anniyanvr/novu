@@ -8,13 +8,12 @@ describe('Health-check', () => {
     await session.initialize();
   });
 
-  describe('/health-check (GET)', () => {
+  describe('/health-check (GET) #novu-v2', () => {
     it('should correctly return a health check', async () => {
-      const {
-        body: { data },
-      } = await session.testAgent.get('/v1/health-check');
+      const result = await session.testAgent.get('/v1/health-check');
+      const { data } = result.body || {};
 
-      expect(data.status).to.equal('ok');
+      expect(data?.status).to.equal('ok');
     });
   });
 });

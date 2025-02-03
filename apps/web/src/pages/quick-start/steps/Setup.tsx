@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { useSegment } from '../../../components/providers/SegmentProvider';
-import { ROUTES } from '../../../constants/routes.enum';
+import { ROUTES } from '../../../constants/routes';
 import { QuickStartWrapper } from '../components/QuickStartWrapper';
 import { SetupTimeline } from '../components/SetupTimeline';
 import { demoSetupSecondaryTitle, OnBoardingAnalyticsEnum } from '../consts';
@@ -17,7 +17,7 @@ export function Setup() {
 
   useEffect(() => {
     segment.track(OnBoardingAnalyticsEnum.FRAMEWORK_SETUP_VISIT, { framework });
-  }, []);
+  }, [segment, framework]);
 
   function handleOnCopy(copiedStepIndex: number) {
     const stepNumber = (copiedStepIndex + 1).toString();

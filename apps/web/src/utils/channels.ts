@@ -1,14 +1,15 @@
-import {
-  BellGradient,
-  ChatGradient,
-  MailGradient,
-  MobileGradient,
-  SmsGradient,
-  TimerGradient,
-} from '../design-system/icons';
 import { ChannelTypeEnum, StepTypeEnum } from '@novu/shared';
-import { DigestGradient } from '../design-system/icons/general/DigestGradient';
 import React from 'react';
+import {
+  ChatFilled,
+  DelayAction,
+  DigestAction,
+  EmailFilled,
+  InAppFilled,
+  PushFilled,
+  SmsFilled,
+  Bolt,
+} from '@novu/design-system';
 
 export enum NodeTypeEnum {
   CHANNEL = 'channel',
@@ -16,7 +17,7 @@ export enum NodeTypeEnum {
 }
 
 interface IChannelDefinition {
-  tabKey: StepTypeEnum | ChannelTypeEnum;
+  tabKey: StepTypeEnum;
   label: string;
   description: string;
   Icon: React.FC<any>;
@@ -35,28 +36,28 @@ export const CHANNEL_TYPE_TO_STRING: Record<ChannelTypeEnum, string> = {
 
 export const channels: IChannelDefinition[] = [
   {
-    tabKey: ChannelTypeEnum.IN_APP,
+    tabKey: StepTypeEnum.IN_APP,
     label: 'In-App',
     description: 'Send notifications to the in-app notification center',
-    Icon: BellGradient,
+    Icon: InAppFilled,
     testId: 'inAppSelector',
     channelType: StepTypeEnum.IN_APP,
     type: NodeTypeEnum.CHANNEL,
   },
   {
-    tabKey: ChannelTypeEnum.EMAIL,
+    tabKey: StepTypeEnum.EMAIL,
     label: 'Email',
     description: 'Send using one of our email integrations',
-    Icon: MailGradient,
+    Icon: EmailFilled,
     testId: 'emailSelector',
     channelType: StepTypeEnum.EMAIL,
     type: NodeTypeEnum.CHANNEL,
   },
   {
-    tabKey: ChannelTypeEnum.SMS,
+    tabKey: StepTypeEnum.SMS,
     label: 'SMS',
     description: "Send an SMS directly to the user's phone",
-    Icon: SmsGradient,
+    Icon: SmsFilled,
     testId: 'smsSelector',
     channelType: StepTypeEnum.SMS,
     type: NodeTypeEnum.CHANNEL,
@@ -65,7 +66,7 @@ export const channels: IChannelDefinition[] = [
     tabKey: StepTypeEnum.DIGEST,
     label: 'Digest',
     description: 'Aggregate events triggered to one notification',
-    Icon: DigestGradient,
+    Icon: DigestAction,
     testId: 'digestSelector',
     channelType: StepTypeEnum.DIGEST,
     type: NodeTypeEnum.ACTION,
@@ -74,25 +75,34 @@ export const channels: IChannelDefinition[] = [
     tabKey: StepTypeEnum.DELAY,
     label: 'Delay',
     description: 'Delay before trigger of next event',
-    Icon: TimerGradient,
+    Icon: DelayAction,
     testId: 'delaySelector',
     channelType: StepTypeEnum.DELAY,
     type: NodeTypeEnum.ACTION,
   },
   {
-    tabKey: ChannelTypeEnum.CHAT,
+    tabKey: StepTypeEnum.CUSTOM,
+    label: 'Custom',
+    description: 'Run custom code',
+    Icon: Bolt,
+    testId: 'customSelector',
+    channelType: StepTypeEnum.CUSTOM,
+    type: NodeTypeEnum.ACTION,
+  },
+  {
+    tabKey: StepTypeEnum.CHAT,
     label: 'Chat',
     description: 'Send a chat message',
-    Icon: ChatGradient,
+    Icon: ChatFilled,
     testId: 'chatSelector',
     channelType: StepTypeEnum.CHAT,
     type: NodeTypeEnum.CHANNEL,
   },
   {
-    tabKey: ChannelTypeEnum.PUSH,
+    tabKey: StepTypeEnum.PUSH,
     label: 'Push',
     description: "Send an Push Notification to a user's device",
-    Icon: MobileGradient,
+    Icon: PushFilled,
     testId: 'pushSelector',
     channelType: StepTypeEnum.PUSH,
     type: NodeTypeEnum.CHANNEL,

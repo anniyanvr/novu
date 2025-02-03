@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react';
-import * as WebFont from 'webfontloader';
+import WebFont from 'webfontloader';
 import { css, Global } from '@emotion/react';
 import {
   NotificationCenter,
@@ -9,9 +9,10 @@ import {
   IStore,
   useNovuContext,
   ColorScheme,
+  IUserPreferenceSettings,
 } from '@novu/notification-center';
 import type { INovuThemeProvider, INotificationCenterStyles } from '@novu/notification-center';
-import { IMessage, IOrganizationEntity, ButtonTypeEnum } from '@novu/shared';
+import { IMessage, IOrganizationEntity, ButtonTypeEnum, isBrowser } from '@novu/shared';
 
 import { API_URL, WS_URL } from '../../config';
 
@@ -37,6 +38,8 @@ export function NotificationCenterWidget(props: INotificationCenterWidgetProps) 
   const [styles, setStyles] = useState<INotificationCenterStyles>();
   const [colorScheme, setColorScheme] = useState<ColorScheme>('light');
   const [doLogout, setDoLogout] = useState(false);
+  const [preferenceFilter, setPreferenceFilter] = useState<(userPreference: IUserPreferenceSettings) => boolean>();
+  const [showUserPreferences, setShowUserPreferences] = useState<boolean>(true);
 
   useEffect(() => {
     if (fontFamily !== DEFAULT_FONT_FAMILY) {
@@ -88,6 +91,14 @@ export function NotificationCenterWidget(props: INotificationCenterWidgetProps) 
           setColorScheme(data.value.colorScheme);
         }
 
+        if (data.value.preferenceFilter) {
+          setPreferenceFilter(() => data.value.preferenceFilter);
+        }
+
+        if (data.value.showUserPreferences) {
+          setShowUserPreferences(data.value.showUserPreferences);
+        }
+
         setFrameInitialized(true);
       }
 
@@ -96,7 +107,7 @@ export function NotificationCenterWidget(props: INotificationCenterWidgetProps) 
       }
     };
 
-    if (process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV === 'test' || (isBrowser() && (window as any).Cypress)) {
       // eslint-disable-next-line
       (window as any).initHandler = handler;
     }
@@ -136,8 +147,10 @@ export function NotificationCenterWidget(props: INotificationCenterWidgetProps) 
               onUrlChange={props.onUrlChange}
               onUnseenCountChanged={props.onUnseenCountChanged}
               onActionClick={props.onActionClick}
+              preferenceFilter={preferenceFilter}
               theme={theme}
               tabs={tabs}
+              showUserPreferences={showUserPreferences}
             />
           </NovuNotificationCenterWrapper>
         </NovuProvider>

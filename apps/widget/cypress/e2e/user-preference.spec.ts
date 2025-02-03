@@ -27,12 +27,13 @@ describe('User Preferences', function () {
         cy.wait(500);
 
         cy.task('createNotifications', {
-          identifier: session.templates[0].triggers[0].identifier,
-          token: session.token,
-          subscriberId: session.subscriber.subscriberId,
+          identifier: session?.templates[0]?.triggers[0]?.identifier,
+          token: session?.token,
+          subscriberId: session?.subscriber?.subscriberId,
           count: 1,
-          organizationId: session.organization._id,
-          templateId: session.templates[0]._id,
+          organizationId: session?.organization?._id,
+          templateId: session?.templates[0]?._id,
+          environmentId: this.session.environment._id,
         });
 
         cy.wait(1000);
@@ -51,10 +52,11 @@ describe('User Preferences', function () {
 
   it.skip('should not send in app after user disables in app channel', function () {
     cy.task('createNotifications', {
-      identifier: this.session.templates[0].triggers[0].identifier,
-      token: this.session.token,
-      subscriberId: this.session.subscriber.subscriberId,
+      identifier: this.session?.templates[0]?.triggers[0]?.identifier,
+      token: this.session?.token,
+      subscriberId: this.session?.subscriber?.subscriberId,
       count: 1,
+      environmentId: this.session.environment._id,
     });
 
     cy.wait('@getNotifications');
@@ -74,10 +76,11 @@ describe('User Preferences', function () {
     });
 
     cy.task('createNotifications', {
-      identifier: this.session.templates[0].triggers[0].identifier,
-      token: this.session.token,
-      subscriberId: this.session.subscriber.subscriberId,
+      identifier: this.session?.templates[0]?.triggers[0]?.identifier,
+      token: this.session?.token,
+      subscriberId: this.session?.subscriber?.subscriberId,
       count: 1,
+      environmentId: this.session.environment._id,
     });
 
     cy.getByTestId('go-back-btn').click();

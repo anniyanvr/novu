@@ -1,41 +1,51 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Group, Center, Box } from '@mantine/core';
 import styled from '@emotion/styled';
-import slugify from 'slugify';
-import { Controller, FormProvider, useForm } from 'react-hook-form';
+import { Controller, FormProvider, useForm, useWatch } from 'react-hook-form';
+import { useClipboard, useDisclosure } from '@mantine/hooks';
 import {
+  CHANNELS_WITH_PRIMARY,
+  CredentialsKeyEnum,
   EmailProviderIdEnum,
   IConfigCredentials,
+  IConstructIntegrationDto,
   ICredentialsDto,
   InAppProviderIdEnum,
   SmsProviderIdEnum,
+  slugify,
 } from '@novu/shared';
-
-import { Button, colors, Sidebar, Text } from '../../../../design-system';
+import { Button, colors, Input, Sidebar, Text, Check, Copy } from '@novu/design-system';
 import { useProviders } from '../../useProviders';
 import type { IIntegratedProvider } from '../../types';
-import { IntegrationInput } from '../../components/IntegrationInput';
-import { useFetchEnvironments } from '../../../../hooks/useFetchEnvironments';
+import { IntegrationInput } from '../IntegrationInput';
+import { useEnvironment } from '../../../../hooks';
 import { useUpdateIntegration } from '../../../../api/hooks/useUpdateIntegration';
 import { successMessage } from '../../../../utils/notifications';
-import { UpdateIntegrationSidebarHeader } from '../../components/UpdateIntegrationSidebarHeader';
-import { SetupWarning } from '../../components/SetupWarning';
-import { UpdateIntegrationCommonFields } from '../../components/UpdateIntegrationCommonFields';
-import { NovuInAppFrameworks } from '../../components/NovuInAppFrameworks';
+import { UpdateIntegrationSidebarHeader } from '../UpdateIntegrationSidebarHeader';
+import { SetupWarning } from '../SetupWarning';
+import { UpdateIntegrationCommonFields } from '../UpdateIntegrationCommonFields';
+import { NovuInAppFrameworks } from '../NovuInAppFrameworks';
 import { FrameworkEnum } from '../../../quick-start/consts';
 import { When } from '../../../../components/utils/When';
 import { SetupTimeline } from '../../../quick-start/components/SetupTimeline';
 import { Faq } from '../../../quick-start/components/QuickStartWrapper';
-import { NovuInAppFrameworkHeader } from '../../components/NovuInAppFrameworkHeader';
-import { NovuInAppSetupWarning } from '../../components/NovuInAppSetupWarning';
-import { NovuProviderSidebarContent } from '../../components/multi-provider/NovuProviderSidebarContent';
-import { useIntercom } from 'react-use-intercom';
+import { NovuInAppFrameworkHeader } from '../NovuInAppFrameworkHeader';
+import { NovuInAppSetupWarning } from '../NovuInAppSetupWarning';
+import { NovuProviderSidebarContent } from './NovuProviderSidebarContent';
+import { useSelectPrimaryIntegrationModal } from './useSelectPrimaryIntegrationModal';
+import { ShareableUrl } from '../Modal/ConnectIntegrationForm';
+import { Conditions, IConditions } from '../../../../components/conditions';
+import { useWebhookSupportStatus } from '../../../../api/hooks';
+import { defaultIntegrationConditionsProps } from '../../constants';
+import { NovuInAppRemoveBranding } from '../NovuInAppRemoveBranding';
 
 interface IProviderForm {
   name: string;
   credentials: ICredentialsDto;
   active: boolean;
   identifier: string;
+  conditions: IConditions[];
+  removeNovuBranding?: boolean;
 }
 
 enum SidebarStateEnum {
@@ -52,15 +62,28 @@ export function UpdateProviderSidebar({
   integrationId?: string;
   onClose: () => void;
 }) {
-  const { update } = useIntercom();
-  const { isLoading: areEnvironmentsLoading } = useFetchEnvironments();
-  const [selectedProvider, setSelectedProvider] = useState<IIntegratedProvider | null>(null);
+  const { isLoaded: isEnvironmentLoaded } = useEnvironment();
   const [sidebarState, setSidebarState] = useState<SidebarStateEnum>(SidebarStateEnum.NORMAL);
   const [framework, setFramework] = useState<FrameworkEnum | null>(null);
   const { providers, isLoading: areProvidersLoading } = useProviders();
-  const isNovuInAppProvider = selectedProvider?.providerId === InAppProviderIdEnum.Novu;
+  const [selectedProvider, setSelectedProvider] = useState<IIntegratedProvider | null>(() => {
+    const provider = providers.find((el) => el.integrationId === integrationId);
 
-  const { onUpdateIntegration, isLoadingUpdate } = useUpdateIntegration(selectedProvider?.integrationId || '');
+    return provider ?? null;
+  });
+  const isNovuInAppProvider = selectedProvider?.providerId === InAppProviderIdEnum.Novu;
+  const { openModal: openSelectPrimaryIntegrationModal, SelectPrimaryIntegrationModal } =
+    useSelectPrimaryIntegrationModal();
+  const [conditionsFormOpened, { close: closeConditionsForm, open: openConditionsForm }] = useDisclosure(false);
+  const webhookUrlClipboard = useClipboard({ timeout: 1000 });
+
+  const { updateIntegration, isLoadingUpdate } = useUpdateIntegration(selectedProvider?.integrationId || '');
+
+  const { isWebhookEnabled, webhookUrl } = useWebhookSupportStatus({
+    hasCredentials: selectedProvider?.hasCredentials,
+    integrationId: selectedProvider?.integrationId,
+    channel: selectedProvider?.channel,
+  });
 
   const methods = useForm<IProviderForm>({
     shouldUseNativeValidation: false,
@@ -70,6 +93,7 @@ export function UpdateProviderSidebar({
       credentials: {},
       active: false,
       identifier: '',
+      conditions: [],
     },
   });
   const {
@@ -78,10 +102,12 @@ export function UpdateProviderSidebar({
     reset,
     watch,
     setValue,
-    formState: { errors, isDirty },
+    getValues,
+    formState: { errors, isDirty, dirtyFields },
   } = methods;
 
   const credentials = watch('credentials');
+  const isActive = watch('active');
   const isSidebarOpened = !!selectedProvider && isOpened;
 
   const haveAllCredentials = useMemo(() => {
@@ -101,14 +127,11 @@ export function UpdateProviderSidebar({
 
   useEffect(() => {
     if (selectedProvider && !selectedProvider?.identifier) {
-      const newIdentifier = slugify(selectedProvider?.displayName, {
-        lower: true,
-        strict: true,
-      });
+      const newIdentifier = slugify(selectedProvider?.displayName);
 
       setValue('identifier', newIdentifier);
     }
-  }, [selectedProvider]);
+  }, [setValue, selectedProvider]);
 
   useEffect(() => {
     if (integrationId === undefined || providers.length === 0) {
@@ -128,9 +151,11 @@ export function UpdateProviderSidebar({
 
         return prev;
       }, {} as any),
+      conditions: foundProvider.conditions,
       active: foundProvider.active,
+      removeNovuBranding: foundProvider.removeNovuBranding,
     });
-  }, [integrationId, providers]);
+  }, [reset, integrationId, providers]);
 
   const onFrameworkClickCallback = (newFramework: FrameworkEnum) => {
     setSidebarState(SidebarStateEnum.EXPANDED);
@@ -149,8 +174,86 @@ export function UpdateProviderSidebar({
       setSidebarState(SidebarStateEnum.NORMAL);
     }
     onClose();
-    update({ hideDefaultLauncher: false });
   };
+
+  const updateAndSelectPrimaryIntegration = async (data: IConstructIntegrationDto) => {
+    if (!selectedProvider) {
+      return;
+    }
+
+    const { channel: selectedChannel, environmentId, primary, conditions } = selectedProvider;
+    const isActiveFieldChanged = dirtyFields.active;
+    const hasSameChannelActiveIntegration = !!providers
+      .filter((el) => el.integrationId !== selectedProvider.integrationId)
+      .find((el) => el.active && el.channel === selectedChannel && el.environmentId === environmentId);
+    const isChannelSupportPrimary = CHANNELS_WITH_PRIMARY.includes(selectedChannel);
+
+    const isChangedToActive =
+      isActiveFieldChanged && isChannelSupportPrimary && isActive && hasSameChannelActiveIntegration;
+
+    const isChangedToInactiveAndIsPrimary =
+      isActiveFieldChanged && isChannelSupportPrimary && !isActive && primary && hasSameChannelActiveIntegration;
+
+    const isPrimaryAndHasConditionsApplied =
+      primary && conditions && conditions.length > 0 && hasSameChannelActiveIntegration;
+
+    const hasNoConditions = !conditions || conditions.length === 0;
+
+    const hasUpdatedConditions = data.conditions && data.conditions.length > 0;
+
+    const hasConditionsAndIsPrimary = hasUpdatedConditions && primary && dirtyFields.conditions;
+
+    if (
+      (hasNoConditions && isChangedToActive) ||
+      isChangedToInactiveAndIsPrimary ||
+      isPrimaryAndHasConditionsApplied ||
+      hasConditionsAndIsPrimary
+    ) {
+      openSelectPrimaryIntegrationModal({
+        environmentId: selectedProvider?.environmentId,
+        channelType: selectedProvider?.channel,
+        exclude: !isActive || hasConditionsAndIsPrimary ? (el) => el._id === selectedProvider.integrationId : undefined,
+        onClose: () => {
+          updateIntegration(data);
+        },
+      });
+
+      return;
+    }
+
+    updateIntegration(data);
+  };
+
+  const onSubmit: React.FormEventHandler<HTMLFormElement> = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    handleSubmit(updateAndSelectPrimaryIntegration)(e);
+  };
+
+  const hmacEnabled = useWatch({
+    control,
+    name: `credentials.${CredentialsKeyEnum.Hmac}`,
+  });
+
+  const updateConditions = (conditions: IConditions[]) => {
+    setValue('conditions', conditions, { shouldDirty: true });
+  };
+
+  if (conditionsFormOpened) {
+    const [conditions, name] = getValues(['conditions', 'name']);
+
+    return (
+      <Conditions
+        conditions={conditions}
+        name={name}
+        isOpened={conditionsFormOpened}
+        updateConditions={updateConditions}
+        onClose={closeConditionsForm}
+        {...defaultIntegrationConditionsProps}
+      />
+    );
+  }
 
   if (
     SmsProviderIdEnum.Novu === selectedProvider?.providerId ||
@@ -160,14 +263,15 @@ export function UpdateProviderSidebar({
       <FormProvider {...methods}>
         <Sidebar
           isOpened={isSidebarOpened}
-          isLoading={areProvidersLoading || areEnvironmentsLoading}
+          isLoading={areProvidersLoading || !isEnvironmentLoaded}
           onClose={onSidebarClose}
-          onSubmit={(e) => {
-            handleSubmit(onUpdateIntegration)(e);
-            e.stopPropagation();
-          }}
+          onSubmit={onSubmit}
           customHeader={
-            <UpdateIntegrationSidebarHeader provider={selectedProvider} onSuccessDelete={onSidebarClose}>
+            <UpdateIntegrationSidebarHeader
+              openConditions={openConditionsForm}
+              provider={selectedProvider}
+              onSuccessDelete={onSidebarClose}
+            >
               <Free>Test Provider</Free>
             </UpdateIntegrationSidebarHeader>
           }
@@ -186,8 +290,9 @@ export function UpdateProviderSidebar({
           }
         >
           <NovuProviderSidebarContent provider={selectedProvider} />
-          <UpdateIntegrationCommonFields provider={selectedProvider} showActive={false} />
+          <UpdateIntegrationCommonFields provider={selectedProvider} />
         </Sidebar>
+        <SelectPrimaryIntegrationModal />
       </FormProvider>
     );
   }
@@ -196,17 +301,18 @@ export function UpdateProviderSidebar({
     <FormProvider {...methods}>
       <Sidebar
         isOpened={isSidebarOpened}
-        isLoading={areProvidersLoading || areEnvironmentsLoading}
+        isLoading={areProvidersLoading || !isEnvironmentLoaded}
         isExpanded={sidebarState === SidebarStateEnum.EXPANDED}
-        onSubmit={(e) => {
-          handleSubmit(onUpdateIntegration)(e);
-          e.stopPropagation();
-        }}
+        onSubmit={onSubmit}
         onClose={onSidebarClose}
         onBack={onBack}
         customHeader={
           sidebarState === SidebarStateEnum.NORMAL ? (
-            <UpdateIntegrationSidebarHeader provider={selectedProvider} onSuccessDelete={onSidebarClose} />
+            <UpdateIntegrationSidebarHeader
+              openConditions={openConditionsForm}
+              provider={selectedProvider}
+              onSuccessDelete={onSidebarClose}
+            />
           ) : (
             <>
               <When truthy={isNovuInAppProvider}>
@@ -250,7 +356,7 @@ export function UpdateProviderSidebar({
               <Controller
                 name={`credentials.${credential.key}`}
                 control={control}
-                defaultValue={credential.type === 'boolean' || credential.type === 'switch' ? false : ''}
+                {...(credential.type === 'boolean' || credential.type === 'switch' ? { defaultValue: false } : {})}
                 rules={{
                   required: credential.required ? `Please enter a ${credential.displayName.toLowerCase()}` : undefined,
                 }}
@@ -260,6 +366,23 @@ export function UpdateProviderSidebar({
               />
             </InputWrapper>
           ))}
+          {isNovuInAppProvider && <NovuInAppRemoveBranding control={control} />}
+          {isWebhookEnabled && (
+            <InputWrapper>
+              <Input
+                label="Webhook URL"
+                value={webhookUrl}
+                readOnly
+                rightSection={
+                  <CopyWrapper onClick={() => webhookUrlClipboard.copy(webhookUrl)}>
+                    {webhookUrlClipboard.copied ? <Check /> : <Copy />}
+                  </CopyWrapper>
+                }
+                data-test-id="provider-webhook-url"
+              />
+            </InputWrapper>
+          )}
+          <ShareableUrl provider={selectedProvider?.providerId} hmacEnabled={!!hmacEnabled} />
           {isNovuInAppProvider && <NovuInAppFrameworks onFrameworkClick={onFrameworkClickCallback} />}
         </When>
         <When truthy={isNovuInAppProvider && sidebarState === SidebarStateEnum.EXPANDED}>
@@ -278,6 +401,7 @@ export function UpdateProviderSidebar({
           </Box>
         </When>
       </Sidebar>
+      <SelectPrimaryIntegrationModal />
     </FormProvider>
   );
 }
@@ -293,4 +417,11 @@ const Free = styled.span`
   font-size: 14px;
   min-width: fit-content;
   margin-left: -4px;
+`;
+
+const CopyWrapper = styled.div`
+  cursor: pointer;
+  &:hover {
+    opacity: 0.8;
+  }
 `;

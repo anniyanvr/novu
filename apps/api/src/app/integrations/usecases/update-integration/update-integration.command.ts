@@ -1,5 +1,6 @@
-import { IsDefined, IsMongoId, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsDefined, IsMongoId, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { ICredentialsDto } from '@novu/shared';
+import { MessageFilter } from '@novu/application-generic';
 
 import { OrganizationCommand } from '../../../shared/commands/organization.command';
 
@@ -27,8 +28,16 @@ export class UpdateIntegrationCommand extends OrganizationCommand {
   credentials?: ICredentialsDto;
 
   @IsOptional()
+  removeNovuBranding?: boolean;
+
+  @IsOptional()
   active?: boolean;
 
   @IsOptional()
   check?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  conditions?: MessageFilter[];
 }

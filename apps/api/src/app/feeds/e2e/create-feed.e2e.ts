@@ -1,10 +1,10 @@
 import { expect } from 'chai';
 import { UserSession } from '@novu/testing';
 import { StepTypeEnum } from '@novu/shared';
-import { CreateWorkflowRequestDto, UpdateWorkflowRequestDto } from '../../workflows/dto';
 import { FeedRepository } from '@novu/dal';
+import { CreateWorkflowRequestDto, UpdateWorkflowRequestDto } from '../../workflows-v1/dto';
 
-describe('Create A Feed - /feeds (POST)', async () => {
+describe('Create A Feed - /feeds (POST) #novu-v1', async () => {
   let session: UserSession;
   const feedRepository: FeedRepository = new FeedRepository();
 
@@ -134,5 +134,16 @@ describe('Create A Feed - /feeds (POST)', async () => {
       _organizationId: session.organization._id,
     });
     expect(feedsCount).to.equal(2);
+  });
+
+  it('should throw error if a feed already exist', async function () {
+    await session.testAgent.post(`/v1/feeds`).send({
+      name: 'identifier_123',
+    });
+    const { body } = await session.testAgent.post(`/v1/feeds`).send({
+      name: 'identifier_123',
+    });
+    expect(body.statusCode).to.equal(409);
+    expect(body.message).to.equal('Feed with identifier: identifier_123 already exists');
   });
 });

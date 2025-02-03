@@ -20,9 +20,9 @@ const digestTourSteps: Step[] = [
     offset: 0,
   },
   {
-    target: '[data-test-id="email-step-settings-edit"]',
+    target: '[data-test-id="custom-code-editor"]',
     content: '',
-    placement: 'left',
+    placement: 'right',
     disableBeacon: true,
     hideBackButton: true,
     locale: { skip: 'Skip tour' },
@@ -32,7 +32,7 @@ const digestTourSteps: Step[] = [
   {
     target: '[data-test-id="test-workflow-btn"]',
     content: '',
-    placement: 'bottom',
+    placement: 'top',
     disableBeacon: true,
     hideBackButton: true,
     tooltipComponent: DigestWorkflowTourTooltip,
@@ -50,14 +50,17 @@ export const useDigestWorkflowTour = ({ startTour }: { startTour: () => void }) 
   const { templateId = '' } = useParams<{ templateId: string }>();
   const isTouring = tourStorage.getCurrentTour('digest', templateId) > -1;
 
-  useEffectOnce(() => {
-    // once there are steps select the node with type DIGEST and start the tour
-    const digestStep = steps.find((step) => step.template?.type === StepTypeEnum.DIGEST);
-    if (digestStep) {
-      navigate(basePath + '/' + StepTypeEnum.DIGEST + '/' + digestStep?.uuid);
-      startTour();
-    }
-  }, isTouring && steps.length > 0);
+  useEffectOnce(
+    () => {
+      // once there are steps select the node with type DIGEST and start the tour
+      const digestStep = steps.find((step) => step.template?.type === StepTypeEnum.DIGEST);
+      if (digestStep) {
+        navigate(`${basePath}/${StepTypeEnum.DIGEST}/${digestStep?.uuid}`);
+        startTour();
+      }
+    },
+    isTouring && steps.length > 0
+  );
 
   return {
     digestTourSteps: isTouring ? digestTourSteps : [],

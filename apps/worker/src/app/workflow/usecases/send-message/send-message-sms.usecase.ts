@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import * as Sentry from '@sentry/node';
+import { addBreadcrumb } from '@sentry/node';
+import { ModuleRef } from '@nestjs/core';
+
 import {
   MessageRepository,
   NotificationStepEntity,
@@ -11,16 +13,17 @@ import { ChannelTypeEnum, LogCodeEnum, ExecutionDetailsSourceEnum, ExecutionDeta
 import {
   InstrumentUsecase,
   DetailEnum,
-  CreateExecutionDetails,
-  CreateExecutionDetailsCommand,
   SelectIntegration,
   CompileTemplate,
   CompileTemplateCommand,
   SmsFactory,
   GetNovuProviderCredentials,
+  SelectVariant,
+  ExecutionLogRoute,
+  ExecutionLogRouteCommand,
 } from '@novu/application-generic';
+import { SmsOutput } from '@novu/framework/internal';
 
-import { CreateLog } from '../../../shared/logs';
 import { SendMessageCommand } from './send-message.command';
 import { SendMessageBase } from './send-message.base';
 import { PlatformException } from '../../../shared/utils';
@@ -32,30 +35,26 @@ export class SendMessageSms extends SendMessageBase {
   constructor(
     protected subscriberRepository: SubscriberRepository,
     protected messageRepository: MessageRepository,
-    protected createLogUsecase: CreateLog,
-    protected createExecutionDetails: CreateExecutionDetails,
+    protected executionLogRoute: ExecutionLogRoute,
     private compileTemplate: CompileTemplate,
     protected selectIntegration: SelectIntegration,
-    protected getNovuProviderCredentials: GetNovuProviderCredentials
+    protected getNovuProviderCredentials: GetNovuProviderCredentials,
+    protected selectVariant: SelectVariant,
+    protected moduleRef: ModuleRef
   ) {
     super(
       messageRepository,
-      createLogUsecase,
-      createExecutionDetails,
+      executionLogRoute,
       subscriberRepository,
       selectIntegration,
-      getNovuProviderCredentials
+      getNovuProviderCredentials,
+      selectVariant,
+      moduleRef
     );
   }
 
   @InstrumentUsecase()
   public async execute(command: SendMessageCommand) {
-    const subscriber = await this.getSubscriberBySubscriberId({
-      subscriberId: command.subscriberId,
-      _environmentId: command.environmentId,
-    });
-    if (!subscriber) throw new PlatformException('Subscriber not found');
-
     const overrideSelectedIntegration = command.overrides?.sms?.integrationIdentifier;
 
     const integration = await this.getIntegration({
@@ -64,50 +63,60 @@ export class SendMessageSms extends SendMessageBase {
       channelType: ChannelTypeEnum.SMS,
       userId: command.userId,
       identifier: overrideSelectedIntegration as string,
+      filterData: {
+        tenant: command.job.tenant,
+      },
     });
 
-    Sentry.addBreadcrumb({
+    addBreadcrumb({
       message: 'Sending SMS',
     });
 
-    const smsChannel: NotificationStepEntity = command.step;
-    if (!smsChannel.template) throw new PlatformException(`Unexpected error: SMS template is missing`);
+    const { step } = command;
 
-    const payload = {
-      subscriber: subscriber,
-      step: {
-        digest: !!command.events?.length,
-        events: command.events,
-        total_count: command.events?.length,
-      },
-      ...command.payload,
-    };
+    if (!step.template) throw new PlatformException(`Unexpected error: SMS template is missing`);
 
-    let content: string | null = '';
+    const { subscriber } = command.compileContext;
+    const template = await this.processVariants(command);
+    const i18nInstance = await this.initiateTranslations(
+      command.environmentId,
+      command.organizationId,
+      subscriber.locale
+    );
+
+    if (template) {
+      step.template = template;
+    }
+
+    const bridgeOutput = command.bridgeData?.outputs as SmsOutput | undefined;
+    let content: string = bridgeOutput?.body || '';
 
     try {
-      content = await this.compileTemplate.execute(
-        CompileTemplateCommand.create({
-          template: smsChannel.template.content as string,
-          data: payload,
-        })
-      );
+      if (!command.bridgeData) {
+        content = await this.compileTemplate.execute(
+          CompileTemplateCommand.create({
+            template: step.template.content as string,
+            data: this.getCompilePayload(command.compileContext),
+          }),
+          i18nInstance
+        );
+
+        if (!content) {
+          throw new PlatformException(`Unexpected error: SMS content is missing`);
+        }
+      }
     } catch (e) {
       await this.sendErrorHandlebars(command.job, e.message);
 
       return;
     }
 
-    if (!content) {
-      throw new PlatformException(`Unexpected error: SMS content is missing`);
-    }
-
     const phone = command.payload.phone || subscriber.phone;
 
     if (!integration) {
-      await this.createExecutionDetails.execute(
-        CreateExecutionDetailsCommand.create({
-          ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
+      await this.executionLogRoute.execute(
+        ExecutionLogRouteCommand.create({
+          ...ExecutionLogRouteCommand.getDetailsFromJob(command.job),
           detail: DetailEnum.SUBSCRIBER_NO_ACTIVE_INTEGRATION,
           source: ExecutionDetailsSourceEnum.INTERNAL,
           status: ExecutionDetailsStatusEnum.FAILED,
@@ -128,9 +137,12 @@ export class SendMessageSms extends SendMessageBase {
 
     await this.sendSelectedIntegrationExecution(command.job, integration);
 
-    const overrides = command.overrides[integration?.providerId] || {};
+    const overrides = {
+      ...(command.overrides[integration?.channel] || {}),
+      ...(command.overrides[integration?.providerId] || {}),
+    };
 
-    const messagePayload = Object.assign({}, command.payload);
+    const messagePayload = { ...command.payload };
     delete messagePayload.attachments;
 
     const message: MessageEntity = await this.messageRepository.create({
@@ -139,7 +151,7 @@ export class SendMessageSms extends SendMessageBase {
       _organizationId: command.organizationId,
       _subscriberId: command._subscriberId,
       _templateId: command._templateId,
-      _messageTemplateId: smsChannel.template._id,
+      _messageTemplateId: step.template._id,
       channel: ChannelTypeEnum.SMS,
       transactionId: command.transactionId,
       phone,
@@ -149,11 +161,12 @@ export class SendMessageSms extends SendMessageBase {
       overrides,
       templateIdentifier: command.identifier,
       _jobId: command.jobId,
+      tags: command.tags,
     });
 
-    await this.createExecutionDetails.execute(
-      CreateExecutionDetailsCommand.create({
-        ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
+    await this.executionLogRoute.execute(
+      ExecutionLogRouteCommand.create({
+        ...ExecutionLogRouteCommand.getDetailsFromJob(command.job),
         detail: DetailEnum.MESSAGE_CREATED,
         source: ExecutionDetailsSourceEnum.INTERNAL,
         status: ExecutionDetailsStatusEnum.PENDING,
@@ -184,9 +197,9 @@ export class SendMessageSms extends SendMessageBase {
         'Subscriber does not have active phone'
       );
 
-      await this.createExecutionDetails.execute(
-        CreateExecutionDetailsCommand.create({
-          ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
+      await this.executionLogRoute.execute(
+        ExecutionLogRouteCommand.create({
+          ...ExecutionLogRouteCommand.getDetailsFromJob(command.job),
           messageId: message._id,
           detail: DetailEnum.SUBSCRIBER_NO_CHANNEL_DETAILS,
           source: ExecutionDetailsSourceEnum.INTERNAL,
@@ -204,13 +217,12 @@ export class SendMessageSms extends SendMessageBase {
         'warning',
         'sms_missing_integration_error',
         'Subscriber does not have an active sms integration',
-        command,
-        LogCodeEnum.MISSING_SMS_INTEGRATION
+        command
       );
 
-      await this.createExecutionDetails.execute(
-        CreateExecutionDetailsCommand.create({
-          ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
+      await this.executionLogRoute.execute(
+        ExecutionLogRouteCommand.create({
+          ...ExecutionLogRouteCommand.getDetailsFromJob(command.job),
           messageId: message._id,
           detail: DetailEnum.SUBSCRIBER_NO_ACTIVE_INTEGRATION,
           source: ExecutionDetailsSourceEnum.INTERNAL,
@@ -228,12 +240,12 @@ export class SendMessageSms extends SendMessageBase {
         'warning',
         'no_integration_from_phone',
         'Integration does not have from phone configured',
-        command,
-        LogCodeEnum.MISSING_SMS_PROVIDER
+        command
       );
-      await this.createExecutionDetails.execute(
-        CreateExecutionDetailsCommand.create({
-          ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
+
+      await this.executionLogRoute.execute(
+        ExecutionLogRouteCommand.create({
+          ...ExecutionLogRouteCommand.getDetailsFromJob(command.job),
           messageId: message._id,
           detail: DetailEnum.SUBSCRIBER_NO_ACTIVE_CHANNEL,
           source: ExecutionDetailsSourceEnum.INTERNAL,
@@ -242,8 +254,6 @@ export class SendMessageSms extends SendMessageBase {
           isRetry: false,
         })
       );
-
-      return;
     }
   }
 
@@ -253,25 +263,30 @@ export class SendMessageSms extends SendMessageBase {
     content: string,
     message: MessageEntity,
     command: SendMessageCommand,
-    overrides: object
+    overrides: Record<string, any> = {}
   ) {
     try {
+      const bridgeBody = command.bridgeData?.outputs.body;
+
       const smsFactory = new SmsFactory();
       const smsHandler = smsFactory.getHandler(this.buildFactoryIntegration(integration));
       if (!smsHandler) {
         throw new PlatformException(`Sms handler for provider ${integration.providerId} is  not found`);
       }
+      const bridgeProviderData = command.bridgeData?.providers?.[integration.providerId] || {};
 
       const result = await smsHandler.send({
-        to: phone,
-        from: integration.credentials.from,
-        content,
+        to: overrides.to || phone,
+        from: overrides.from || integration.credentials.from,
+        content: bridgeBody || overrides.content || content,
         id: message._id,
+        customData: overrides.customData || {},
+        bridgeProviderData,
       });
 
-      await this.createExecutionDetails.execute(
-        CreateExecutionDetailsCommand.create({
-          ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
+      await this.executionLogRoute.execute(
+        ExecutionLogRouteCommand.create({
+          ...ExecutionLogRouteCommand.getDetailsFromJob(command.job),
           messageId: message._id,
           detail: DetailEnum.MESSAGE_SENT,
           source: ExecutionDetailsSourceEnum.INTERNAL,
@@ -301,20 +316,19 @@ export class SendMessageSms extends SendMessageBase {
         'unexpected_sms_error',
         e.message || e.name || 'Un-expect SMS provider error',
         command,
-        LogCodeEnum.SMS_ERROR,
         e
       );
 
-      await this.createExecutionDetails.execute(
-        CreateExecutionDetailsCommand.create({
-          ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
+      await this.executionLogRoute.execute(
+        ExecutionLogRouteCommand.create({
+          ...ExecutionLogRouteCommand.getDetailsFromJob(command.job),
           messageId: message._id,
           detail: DetailEnum.PROVIDER_ERROR,
           source: ExecutionDetailsSourceEnum.INTERNAL,
           status: ExecutionDetailsStatusEnum.FAILED,
           isTest: false,
           isRetry: false,
-          raw: JSON.stringify(e),
+          raw: JSON.stringify({ message: e?.response?.data || e.message, name: e.name }),
         })
       );
     }

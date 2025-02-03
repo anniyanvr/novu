@@ -1,34 +1,56 @@
 import { useState } from 'react';
-import { EmailContentCard } from './EmailContentCard';
-import { useAuthContext } from '../../../../components/providers/AuthProvider';
-import { When } from '../../../../components/utils/When';
-import { Preview } from '../../editor/Preview';
-import { EditorPreviewSwitch } from '../EditorPreviewSwitch';
-import { Grid, Group, SegmentedControl, useMantineTheme } from '@mantine/core';
-import { TestSendEmail } from './TestSendEmail';
-import { colors } from '../../../../design-system';
-import { MobileIcon } from '../../editor/PreviewSegment/MobileIcon';
-import { WebIcon } from '../../editor/PreviewSegment/WebIcon';
+import { Grid, SegmentedControl, useMantineTheme } from '@mantine/core';
+import { colors } from '@novu/design-system';
 import { useHotkeys } from '@mantine/hooks';
+import { ChannelTypeEnum } from '@novu/shared';
+import { EmailContentCard } from './EmailContentCard';
+import { useAuth } from '../../../../hooks/useAuth';
+import { When } from '../../../../components/utils/When';
+import { EmailPreview } from '../../../../components/workflow/preview';
+import { EditorPreviewSwitch } from '../EditorPreviewSwitch';
+import { TestSendEmail } from './TestSendEmail';
+import { MobileIcon } from '../../../../components/workflow/preview/email/PreviewSegment/MobileIcon';
+import { WebIcon } from '../../../../components/workflow/preview/email/PreviewSegment/WebIcon';
 import { VariablesManagement } from './variables-management/VariablesManagement';
-import { useVariablesManager } from '../../../../hooks';
-import { VariableManagerModal } from '../VariableManagerModal';
+import {
+  useHasActiveIntegrations,
+  useGetPrimaryIntegration,
+  useIntegrationLimit,
+  useVariablesManager,
+  useEnvironment,
+} from '../../../../hooks';
+import { EditVariablesModal } from '../EditVariablesModal';
 import { StepSettings } from '../../workflow/SideBar/StepSettings';
+import { LackIntegrationAlert } from '../LackIntegrationAlert';
+import { useStepFormPath } from '../../hooks/useStepFormPath';
+import { useTemplateEditorForm } from '../TemplateEditorFormProvider';
 
 export enum ViewEnum {
   EDIT = 'Edit',
   PREVIEW = 'Preview',
+  CODE = 'Code',
+  CONTROLS = 'Controls',
   TEST = 'Test',
 }
 const templateFields = ['content', 'htmlContent', 'subject', 'preheader', 'senderName'];
 
-export function EmailMessagesCards({ index, isIntegrationActive }: { index: number; isIntegrationActive: boolean }) {
-  const { currentOrganization } = useAuthContext();
-  const [view, setView] = useState<ViewEnum>(ViewEnum.EDIT);
+export function EmailMessagesCards() {
+  const { currentOrganization } = useAuth();
+  const { template } = useTemplateEditorForm();
+  const { environment, bridge } = useEnvironment({ bridge: template?.bridge });
+  const [view, setView] = useState<ViewEnum>(bridge ? ViewEnum.PREVIEW : ViewEnum.EDIT);
   const [preview, setPreview] = useState<'mobile' | 'web'>('web');
   const theme = useMantineTheme();
   const [modalOpen, setModalOpen] = useState(false);
-  const variablesArray = useVariablesManager(index, templateFields);
+  const variablesArray = useVariablesManager(templateFields);
+  const { isLimitReached } = useIntegrationLimit(ChannelTypeEnum.EMAIL);
+  const { hasActiveIntegration } = useHasActiveIntegrations({
+    channelType: ChannelTypeEnum.EMAIL,
+  });
+  const { primaryIntegration } = useGetPrimaryIntegration({
+    channelType: ChannelTypeEnum.EMAIL,
+  });
+  const stepFormPath = useStepFormPath();
 
   useHotkeys([
     [
@@ -66,10 +88,19 @@ export function EmailMessagesCards({ index, isIntegrationActive }: { index: numb
           position: 'relative',
         }}
       >
-        <StepSettings index={index} />
-        <Grid m={0} mb={24} mt={24}>
+        {!hasActiveIntegration && isLimitReached && <LackIntegrationAlert channelType={ChannelTypeEnum.EMAIL} />}
+        {hasActiveIntegration && !primaryIntegration && (
+          <LackIntegrationAlert
+            channelType={ChannelTypeEnum.EMAIL}
+            text={`You have multiple provider instances for Email in the ${environment?.name} environment.
+            Please select the primary instance.`}
+            isPrimaryMissing
+          />
+        )}
+        <StepSettings />
+        <Grid m={0} mt={24}>
           <Grid.Col p={0} mr={20} span={7}>
-            <EditorPreviewSwitch view={view} setView={setView} />
+            <EditorPreviewSwitch view={view} setView={setView} bridge={bridge} />
           </Grid.Col>
           <Grid.Col p={0} span={2}>
             <When truthy={view === ViewEnum.PREVIEW}>
@@ -117,20 +148,16 @@ export function EmailMessagesCards({ index, isIntegrationActive }: { index: numb
         </Grid>
       </div>
       <When truthy={view === ViewEnum.PREVIEW}>
-        <Preview activeStep={index} view={preview} />
+        <EmailPreview view={preview} />
       </When>
       <When truthy={view === ViewEnum.TEST}>
-        <TestSendEmail isIntegrationActive={isIntegrationActive} index={index} />
+        <TestSendEmail bridge={bridge} isIntegrationActive={hasActiveIntegration} />
       </When>
       <When truthy={view === ViewEnum.EDIT}>
         <Grid grow>
           <Grid.Col span={9}>
-            <EmailContentCard
-              key={index}
-              organization={currentOrganization}
-              index={index}
-              isIntegrationActive={isIntegrationActive}
-            />
+            {}
+            <EmailContentCard organization={currentOrganization!} />
           </Grid.Col>
           <Grid.Col
             span={3}
@@ -139,7 +166,8 @@ export function EmailMessagesCards({ index, isIntegrationActive }: { index: numb
             }}
           >
             <VariablesManagement
-              index={index}
+              bridge={bridge}
+              path={`${stepFormPath}.template.variables`}
               openVariablesModal={() => {
                 setModalOpen(true);
               }}
@@ -147,7 +175,7 @@ export function EmailMessagesCards({ index, isIntegrationActive }: { index: numb
           </Grid.Col>
         </Grid>
       </When>
-      <VariableManagerModal index={index} setOpen={setModalOpen} open={modalOpen} variablesArray={variablesArray} />
+      <EditVariablesModal setOpen={setModalOpen} open={modalOpen} variablesArray={variablesArray} />
     </>
   );
 }

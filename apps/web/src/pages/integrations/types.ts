@@ -6,9 +6,12 @@ import type {
   IProviderConfig,
   ProvidersIdEnum,
 } from '@novu/shared';
+import { IConditions } from '../../components/conditions';
 
 export interface ITableIntegration {
   name: string;
+  order: number;
+  primary: boolean;
   integrationId: string;
   identifier: string;
   provider: string;
@@ -18,6 +21,7 @@ export interface ITableIntegration {
   environment: string;
   active: boolean;
   logoFileName: IProviderConfig['logoFileName'];
+  conditions?: IConditions[];
 }
 
 export interface IIntegratedProvider {
@@ -25,17 +29,21 @@ export interface IIntegratedProvider {
   integrationId: string;
   displayName: string;
   channel: ChannelTypeEnum;
+  hasCredentials?: boolean;
   credentials: IConfigCredentials[];
   docReference: string;
   comingSoon: boolean;
   active: boolean;
+  removeNovuBranding?: boolean;
   connected: boolean;
+  conditions?: IConditions[];
   logoFileName: ILogoFileName;
   betaVersion: boolean;
   novu?: boolean;
   environmentId?: string;
   name?: string;
   identifier?: string;
+  primary: boolean;
 }
 
 export interface IntegrationEntity {
@@ -47,9 +55,12 @@ export interface IntegrationEntity {
   providerId: ProvidersIdEnum;
   channel: ChannelTypeEnum;
   credentials: ICredentials;
+  conditions?: IConditions[];
   active: boolean;
-  selected: boolean;
+  removeNovuBranding?: boolean;
   deleted: boolean;
+  order: number;
+  primary: boolean;
   deletedAt: string;
   deletedBy: string;
 }

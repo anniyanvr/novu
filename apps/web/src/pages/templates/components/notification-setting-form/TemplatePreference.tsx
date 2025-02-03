@@ -1,15 +1,14 @@
 import { FunctionComponent } from 'react';
 import { Group, Input, InputWrapperProps, Text } from '@mantine/core';
-import styled from '@emotion/styled';
 import { useFormContext, Controller } from 'react-hook-form';
 
-import { useEnvController } from '../../../../hooks';
-import { Checkbox, colors, Switch } from '../../../../design-system';
-import { channels } from '../../../../utils/channels';
+import { Checkbox, colors, Switch } from '@novu/design-system';
+import { ChannelTypeEnum } from '@novu/shared';
+import { useEnvironment } from '../../../../hooks';
 import type { IForm } from '../formTypes';
 import { LabelWithTooltip } from '../../workflow/LabelWithTooltip';
 import { ChannelTitle } from '../ChannelTitle';
-import { ChannelTypeEnum } from '@novu/shared';
+import { useTemplateEditorForm } from '../TemplateEditorFormProvider';
 
 export function TemplatePreference() {
   return (
@@ -22,7 +21,8 @@ export function TemplatePreference() {
 
 export function ChannelPreference() {
   const { control } = useFormContext();
-  const { readonly } = useEnvController();
+  const { template } = useTemplateEditorForm();
+  const { readonly } = useEnvironment({ bridge: template?.bridge });
 
   return (
     <Controller
@@ -39,9 +39,7 @@ export function ChannelPreference() {
 
         return (
           <>
-            <Text mb={16} color={colors.B60}>
-              Default Channels On:
-            </Text>
+            <Text color={colors.B60}>Default Channels On:</Text>
             {Object.keys(preferences).map((key) => {
               const checked = preferences[key] || false;
 
@@ -52,8 +50,8 @@ export function ChannelPreference() {
                     border: `1px dashed ${colors.B40}`,
                     borderRadius: 8,
                   }}
-                  mb={24}
                   position="apart"
+                  key={key}
                 >
                   <Text>{<ChannelTitle channel={key as ChannelTypeEnum} />}</Text>
                   <div>
@@ -76,16 +74,17 @@ export function ChannelPreference() {
 
 export function CriticalPreference() {
   const { control } = useFormContext();
-  const { readonly } = useEnvController();
+  const { template } = useTemplateEditorForm();
+  const { readonly } = useEnvironment({ bridge: template?.bridge });
 
   return (
     <Controller
       name="critical"
-      defaultValue={false}
+      defaultValue={true}
       control={control}
       render={({ field }) => {
         return (
-          <Group mb={24} align="center" position="apart">
+          <Group align="center" position="apart">
             <LabelWithTooltip
               label="Users will be able to manage subscriptions"
               tooltip="Allow opting out of the specific channel. Users will receive notifications in the active channels."
@@ -101,21 +100,6 @@ export function CriticalPreference() {
 export const InputWrapperProxy: FunctionComponent<InputWrapperProps> = ({ children, ...props }) => {
   return <Input.Wrapper {...props}>{children}</Input.Wrapper>;
 };
-
-const InputBackground = styled(InputWrapperProxy)`
-  background: ${({ theme }) => (theme.colorScheme === 'dark' ? colors.B17 : colors.B98)};
-  border-radius: 7px;
-`;
-
-const StyledCheckbox = styled(CheckboxProxy)<{ checked: boolean }>`
-  label {
-    ${({ checked }) =>
-      !checked &&
-      `
-    color: ${colors.B60}
-  `}
-  }
-`;
 
 export function CheckboxProxy({ ...props }) {
   return <Checkbox {...props} />;

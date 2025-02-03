@@ -1,7 +1,7 @@
 import { useMantineColorScheme } from '@mantine/core';
 import React, { useMemo, useCallback } from 'react';
 import Joyride from 'react-joyride';
-import { colors } from '../../../design-system';
+import { colors } from '@novu/design-system';
 
 import { useDigestWorkflowTour } from './useDigestWorkflowTour';
 import { useStartFromScratchTour } from './useStartFromScratchTour';
@@ -74,7 +74,7 @@ export const TourProvider = React.memo(() => {
         styles={{
           options: {
             arrowColor: colorScheme === 'dark' ? colors.B30 : colors.B98,
-            zIndex: 99,
+            zIndex: 200,
           },
           tooltipFooter: {
             flexDirection: 'row-reverse',

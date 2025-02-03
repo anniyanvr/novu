@@ -1,25 +1,24 @@
 import { Tabs } from '@mantine/core';
 import { useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import useStyles from '../../../design-system/tabs/Tabs.styles';
+import { useTabsStyles } from '@novu/design-system';
 import { useBasePath } from '../hooks/useBasePath';
 
 export const WorkflowSettingsTabs = () => {
-  const { classes } = useStyles(false);
+  const { classes } = useTabsStyles(false);
   const basePath = useBasePath();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const value = useMemo(() => {
-    return pathname.replace(basePath + '/', '');
+    return pathname.replace(`${basePath}/`, '');
   }, [pathname, basePath]);
 
   return (
     <Tabs
-      mb={24}
       orientation="horizontal"
       keepMounted={true}
       onTabChange={(tabValue) => {
-        navigate(basePath + '/' + tabValue);
+        navigate(`${basePath}/${tabValue}`);
       }}
       variant="default"
       value={value}

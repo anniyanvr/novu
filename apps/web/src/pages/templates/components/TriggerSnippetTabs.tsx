@@ -1,16 +1,19 @@
 import { Prism } from '@mantine/prism';
+import { useMemo } from 'react';
+import set from 'lodash.set';
+import get from 'lodash.get';
+
 import { INotificationTrigger, INotificationTriggerVariable, TemplateVariableTypeEnum } from '@novu/shared';
 
-import { API_ROOT } from '../../../config';
-import { colors, Tabs } from '../../../design-system';
-import * as set from 'lodash.set';
-import * as get from 'lodash.get';
+import { colors, Tabs } from '@novu/design-system';
+import { CodeSnippetProps, createCurlSnippet, createNodeSnippet } from '../../../utils/codeSnippets';
 
 const NODE_JS = 'Node.js';
 const CURL = 'Curl';
 
 export function TriggerSnippetTabs({ trigger }: { trigger: INotificationTrigger }) {
-  const { subscriberVariables: triggerSubscriberVariables = [] } = trigger || {};
+  const { subscriberVariables: triggerSubscriberVariables = [], reservedVariables: triggerSnippetVariables = [] } =
+    trigger || {};
   const isPassingSubscriberId = triggerSubscriberVariables?.find((el) => el.name === 'subscriberId');
   const subscriberVariables = isPassingSubscriberId
     ? [...triggerSubscriberVariables]
@@ -19,75 +22,50 @@ export function TriggerSnippetTabs({ trigger }: { trigger: INotificationTrigger 
   const toValue = getSubscriberValue(subscriberVariables, (variable) => variable.value || '<REPLACE_WITH_DATA>');
   const payloadValue = getPayloadValue(trigger.variables);
 
+  const reservedValue = useMemo(() => {
+    return triggerSnippetVariables.reduce((prev, variable) => {
+      prev[variable.type] = getPayloadValue(variable.variables);
+
+      return prev;
+    }, {});
+  }, [triggerSnippetVariables]);
+
   const prismTabs = [
     {
       value: NODE_JS,
-      content: getNodeTriggerSnippet(trigger.identifier, toValue, payloadValue),
+      content: getNodeTriggerSnippet({
+        identifier: trigger.identifier,
+        to: toValue,
+        payload: payloadValue,
+        snippet: reservedValue,
+      }),
     },
     {
       value: CURL,
-      content: getCurlTriggerSnippet(trigger.identifier, toValue, payloadValue),
+      content: getCurlTriggerSnippet({
+        identifier: trigger.identifier,
+        to: toValue,
+        payload: payloadValue,
+        snippet: reservedValue,
+      }),
     },
   ];
 
   return <Tabs defaultValue={NODE_JS} data-test-id="trigger-code-snippet" menuTabs={prismTabs} />;
 }
 
-export const getNodeTriggerSnippet = (
-  identifier: string,
-  to: Record<string, unknown>,
-  payload: Record<string, unknown>,
-  overrides?: Record<string, unknown>
-) => {
-  const triggerCodeSnippet = `import { Novu } from '@novu/node'; 
-
-const novu = new Novu('<API_KEY>');
-
-novu.trigger('${identifier}', ${JSON.stringify(
-    {
-      to,
-      payload,
-      overrides,
-    },
-    null,
-    2
-  )
-    .replace(/"([^"]+)":/g, '$1:')
-    .replace(/"/g, "'")
-    .replaceAll('\n', '\n  ')});
-`;
-
+export const getNodeTriggerSnippet = (props: CodeSnippetProps) => {
   return (
     <Prism mt={5} styles={prismStyles} data-test-id="trigger-code-snippet" language="javascript">
-      {triggerCodeSnippet}
+      {createNodeSnippet(props)}
     </Prism>
   );
 };
 
-export const getCurlTriggerSnippet = (
-  identifier: string,
-  to: Record<string, any>,
-  payload: Record<string, any>,
-  overrides?: Record<string, any>
-) => {
-  const curlSnippet = `curl --location --request POST '${API_ROOT}/v1/events/trigger' \\
-     --header 'Authorization: ApiKey <REPLACE_WITH_API_KEY>' \\
-     --header 'Content-Type: application/json' \\
-     --data-raw '${JSON.stringify(
-       {
-         name: identifier,
-         to,
-         payload,
-         overrides,
-       },
-       null,
-       2
-     ).replaceAll('\n', '\n       ')}'
-  `;
-
+export const getCurlTriggerSnippet = (props: CodeSnippetProps) => {
   return (
     <Prism mt={5} styles={prismStyles} language="bash" key="2" data-test-id="trigger-curl-snippet">
-      {curlSnippet}
+      {createCurlSnippet(props)}
     </Prism>
   );
 };

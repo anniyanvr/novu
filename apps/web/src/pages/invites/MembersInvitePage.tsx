@@ -1,12 +1,13 @@
 import { Form } from 'antd';
-import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import styled from '@emotion/styled';
 import { showNotification } from '@mantine/notifications';
 import { Container, Group } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { MemberRoleEnum } from '@novu/shared';
+import type { IResponseError } from '@novu/shared';
 
+import { Button, Input, Invite, UserAccess } from '@novu/design-system';
 import PageHeader from '../../components/layout/components/PageHeader';
 import PageContainer from '../../components/layout/components/PageContainer';
 import {
@@ -17,18 +18,18 @@ import {
   resendInviteMember,
 } from '../../api/organization';
 import { MembersTable } from './components/MembersTable';
-import { Button, Input } from '../../design-system';
-import { Invite } from '../../design-system/icons';
-import { useAuthContext } from '../../components/providers/AuthProvider';
+import { useAuth } from '../../hooks/useAuth';
 import { parseUrl } from '../../utils/routeUtils';
-import { ROUTES } from '../../constants/routes.enum';
+import { ROUTES } from '../../constants/routes';
+import { ProductLead } from '../../components/utils/ProductLead';
+import { useSegment } from '../../components/providers/SegmentProvider';
 
 export function MembersInvitePage() {
   const [form] = Form.useForm();
+  const segment = useSegment();
   const clipboardInviteLink = useClipboard({ timeout: 1000 });
-  const [invitedMemberEmail, setInvitedMemberEmail] = useState<string>('');
-  const selfHosted = process.env.REACT_APP_DOCKER_HOSTED_ENV === 'true';
-  const { currentOrganization, currentUser } = useAuthContext();
+  const selfHosted = process.env.REACT_APP_IS_SELF_HOSTED === 'true';
+  const { currentOrganization, currentUser } = useAuth();
 
   const {
     data: members,
@@ -36,25 +37,15 @@ export function MembersInvitePage() {
     refetch,
   } = useQuery<any[]>(['getOrganizationMembers'], getOrganizationMembers);
 
-  const { isLoading: loadingSendInvite, mutateAsync: sendInvite } = useMutation<
-    string,
-    { error: string; message: string; statusCode: number },
-    string
-  >((email) => inviteMember(email));
-
-  useEffect(() => {
-    if (!invitedMemberEmail) return;
-
-    inviteByLink(invitedMemberEmail);
-
-    setInvitedMemberEmail('');
-  }, [members]);
+  const { isLoading: loadingSendInvite, mutateAsync: sendInvite } = useMutation<string, IResponseError, string>(
+    (email) => inviteMember(email)
+  );
 
   async function onSubmit({ email }) {
     if (!email) return;
 
     if (selfHosted) {
-      setInvitedMemberEmail(email);
+      inviteByLink(email);
     }
 
     try {
@@ -68,6 +59,8 @@ export function MembersInvitePage() {
         });
       } else throw e;
     }
+
+    segment.track('Team Member Invite Sent');
 
     if (!selfHosted) {
       showNotification({
@@ -154,7 +147,7 @@ export function MembersInvitePage() {
   };
 
   const generateInviteLink = (memberToken: string) => {
-    return `${window.location.origin.toString()}` + parseUrl(ROUTES.AUTH_INVITATION_TOKEN, { token: memberToken });
+    return `${window.location.origin.toString()}${parseUrl(ROUTES.AUTH_INVITATION_TOKEN, { token: memberToken })}`;
   };
 
   function getInviteMemberByLinkDiv(inviteHref: string, currentMember) {
@@ -188,6 +181,14 @@ export function MembersInvitePage() {
         }
       />
 
+      <Container fluid ml={5}>
+        <ProductLead
+          icon={<UserAccess />}
+          id="rbac-team-page"
+          title="Role-based access control"
+          text="Securely manage users' permissions to access system resources."
+        />
+      </Container>
       <Container fluid mt={15} ml={5}>
         <MembersTable
           loading={loadingMembers}
